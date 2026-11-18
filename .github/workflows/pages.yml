@@ -17,6 +17,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+      - run: npm run format:check
+      - run: node build-site.mjs
+      - run: npm test
       - run: node build-site.mjs
       - run: npm test
       - uses: actions/upload-pages-artifact@v3
