@@ -34,6 +34,7 @@ import {
   type Encoding,
   type Kind,
 } from './core.ts';
+import { documentToMermaid, type MermaidResult } from './mermaid.ts';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const germanNames: Record<string, string> = {
   Level: 'Gruppe',
@@ -98,6 +99,17 @@ let fields: { id: string; input: HTMLTextAreaElement }[] = [],
   navEntries: { id: string; depth: number; text: string; kind: string }[] = [],
   navLimit = 250,
   raf = 0;
+type ViewMode = 'structure' | 'mermaid';
+type MermaidApi = {
+  initialize: (config: Record<string, unknown>) => void;
+  render: (id: string, code: string) => Promise<{ svg: string }>;
+};
+let viewMode: ViewMode = 'structure',
+  mermaidResult: MermaidResult | null = null,
+  mermaidRenderSerial = 0,
+  mermaidInitialized = false,
+  mermaidNaturalWidth = 0,
+  mermaidNaturalHeight = 0;
 const viewport = $('viewport'),
   svg = $('diagram') as unknown as SVGSVGElement;
 function message(title: string, text: string) {
@@ -791,8 +803,15 @@ $('case-layout').onchange = () =>
   });
 $('zoom').onchange = () => {
   scale = Number($<HTMLSelectElement>('zoom').value);
-  rebuild(false);
+  if (viewMode === 'mermaid') applyMermaidZoom();
+  else rebuild(false);
 };
+$('structure-view').onclick = () => setViewMode('structure');
+$('mermaid-view').onclick = () => setViewMode('mermaid');
+$('mermaid-fit').onclick = fitMermaid;
+$('mermaid-copy').onclick = () => void copyMermaid();
+$('mermaid-source').onclick = exportMermaidSource;
+$('mermaid-svg').onclick = exportMermaidSvg;
 $('search').oninput = () => {
   navLimit = 250;
   renderNav();
@@ -904,8 +923,8 @@ function quickbar() {
   const bar = $('quickbar');
   bar.replaceChildren();
   const ids = validSelection();
-  bar.hidden = !!doc.view.readingMode || !ids.length;
-  if (doc.view.readingMode || !ids.length) return;
+  bar.hidden = viewMode === 'mermaid' || !!doc.view.readingMode || !ids.length;
+  if (viewMode === 'mermaid' || doc.view.readingMode || !ids.length) return;
   bar.append(button(ids.length > 1 ? ids.length + ' Blöcke' : 'Bearbeiten', () => editNode(ids[0])));
   bar.append(button('Auswahl aufheben', clearSelection));
   bar.append(
@@ -1400,6 +1419,7 @@ type TabState = {
   scrollY: number;
   search: string;
   handle: LocalHandle | null;
+  viewMode: ViewMode;
 };
 const tabs: TabState[] = [];
 let activeTab = 0,
@@ -1421,9 +1441,10 @@ function stashTab() {
     t.selected = selected;
     t.collapsed = new Set(collapsed);
     t.scale = scale;
-    t.scrollX = viewport.scrollLeft;
-    t.scrollY = viewport.scrollTop;
+    t.scrollX = (viewMode === 'mermaid' ? $('mermaid-panel') : viewport).scrollLeft;
+    t.scrollY = (viewMode === 'mermaid' ? $('mermaid-panel') : viewport).scrollTop;
     t.search = $<HTMLInputElement>('search').value;
+    t.viewMode = viewMode;
   }
 }
 function setDocument(next: ReturnType<typeof emptyDocument>, imported = false, handle: LocalHandle | null = null) {
@@ -1444,9 +1465,11 @@ function setDocument(next: ReturnType<typeof emptyDocument>, imported = false, h
     scrollY: 0,
     search: '',
     handle,
+    viewMode: 'structure',
   };
   tabs.push(t);
   activeTab = t.id;
+  viewMode = 'structure';
   activateDocument(next, imported);
   t.history = history;
   scale = 1;
@@ -1458,6 +1481,7 @@ function switchTab(id: number) {
   const t = tabs.find((t) => t.id === id);
   if (!t) return;
   activeTab = id;
+  viewMode = t.viewMode;
   activateDocument(t.doc, t.dirty);
   history = t.history;
   selected = t.selected;
@@ -1467,7 +1491,7 @@ function switchTab(id: number) {
   $<HTMLSelectElement>('zoom').value = String(scale);
   $<HTMLInputElement>('search').value = t.search;
   rebuild();
-  viewport.scrollTo(t.scrollX, t.scrollY);
+  (viewMode === 'mermaid' ? $('mermaid-panel') : viewport).scrollTo(t.scrollX, t.scrollY);
 }
 function renderTabs() {
   $<HTMLButtonElement>('navigation-back').disabled = !tabs.find((t) => t.id === activeTab)?.back?.length;
@@ -1854,11 +1878,196 @@ $('include-pick').onclick = () => {
   void openFile();
 };
 $('include-cancel').onclick = () => $<HTMLDialogElement>('include-dialog').close();
+function currentMermaidResult() {
+  mermaidResult = documentToMermaid(doc);
+  return mermaidResult;
+}
+function mermaidSvg() {
+  return $('mermaid-content').querySelector('svg') as SVGSVGElement | null;
+}
+function mermaidNode(astId: string) {
+  const id = mermaidResult?.nodeIds[astId];
+  return id ? $('mermaid-content').querySelector<SVGGElement>(`[id^="flowchart-${id}-"]`) : null;
+}
+function syncMermaidSelection() {
+  const host = $('mermaid-content');
+  host.querySelectorAll('.mermaid-selected').forEach((element) => element.classList.remove('mermaid-selected'));
+  if (!selected) return;
+  const element = mermaidNode(selected);
+  if (element) {
+    element.classList.add('mermaid-selected');
+    element.setAttribute('aria-pressed', 'true');
+  }
+}
+function applyMermaidZoom() {
+  const diagram = mermaidSvg();
+  if (!diagram || !mermaidNaturalWidth || !mermaidNaturalHeight) return;
+  diagram.style.width = mermaidNaturalWidth * scale + 'px';
+  diagram.style.height = mermaidNaturalHeight * scale + 'px';
+  diagram.style.maxWidth = 'none';
+  const host = $('mermaid-content');
+  host.style.width = Math.max($('mermaid-panel').clientWidth, mermaidNaturalWidth * scale + 40) + 'px';
+  host.style.height = Math.max($('mermaid-panel').clientHeight, mermaidNaturalHeight * scale + 40) + 'px';
+}
+function fitMermaid() {
+  if (!mermaidNaturalWidth) return status('Das Mermaid-Diagramm wird noch aufgebaut.');
+  const available = Math.max(100, $('mermaid-panel').clientWidth - 40);
+  const fit = Math.max(0.1, Math.min(1.5, available / mermaidNaturalWidth));
+  const values = Array.from($<HTMLSelectElement>('zoom').options)
+    .map((option) => Number(option.value))
+    .filter((value) => value <= fit);
+  scale = values.length ? Math.max(...values) : 0.1;
+  $<HTMLSelectElement>('zoom').value = String(scale);
+  applyMermaidZoom();
+}
+function setViewMode(next: ViewMode) {
+  applyFields();
+  if (next === 'mermaid' && doc.metadata.sourceReadOnly === 'true')
+    return message('Mermaid nicht verfügbar', 'Für reine Quelltextdateien steht kein Strukturmodell zur Verfügung.');
+  viewMode = next;
+  rebuild(false);
+}
+async function copyMermaid() {
+  const code = currentMermaidResult().code;
+  try {
+    if (!navigator.clipboard) throw Error('Clipboard API nicht verfügbar');
+    await navigator.clipboard.writeText(code);
+    status('Mermaid-Quelltext kopiert.');
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = code;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const copied = document.execCommand?.('copy');
+    area.remove();
+    if (copied) status('Mermaid-Quelltext kopiert.');
+    else message('Mermaid-Quelltext', code);
+  }
+}
+function downloadBlob(content: string | Blob, type: string, extension: string) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // eslint-disable-next-line no-control-regex -- Steuerzeichen werden aus Dateinamen entfernt.
+  a.download = doc.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') + extension;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  status('Datei erzeugt: ' + a.download);
+}
+function exportMermaidSource() {
+  downloadBlob(currentMermaidResult().code, 'text/plain;charset=utf-8', '.mmd');
+}
+function exportMermaidSvg() {
+  const diagram = mermaidSvg();
+  if (!diagram) return message('Mermaid nicht bereit', 'Bitte warten, bis das Diagramm vollständig dargestellt ist.');
+  downloadBlob(diagram.outerHTML, 'image/svg+xml;charset=utf-8', '.mermaid.svg');
+}
+async function renderMermaidView(serial: number, renderingDoc: Document) {
+  const host = $('mermaid-content');
+  try {
+    const result = documentToMermaid(renderingDoc);
+    const api = (globalThis as unknown as { fopMermaid?: MermaidApi }).fopMermaid;
+    if (!api) throw Error('Der lokale Mermaid-Renderer konnte nicht geladen werden.');
+    if (!mermaidInitialized) {
+      api.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'neutral',
+        fontFamily: 'Segoe UI, Arial, sans-serif',
+        flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis' },
+      });
+      mermaidInitialized = true;
+    }
+    const rendered = await api.render('fopMermaid' + serial, result.code);
+    if (serial !== mermaidRenderSerial || doc !== renderingDoc || viewMode !== 'mermaid') return;
+    mermaidResult = result;
+    host.innerHTML = rendered.svg;
+    const diagram = mermaidSvg();
+    if (!diagram) throw Error('Mermaid hat kein SVG erzeugt.');
+    diagram.setAttribute('role', 'img');
+    diagram.setAttribute('aria-label', 'Gesamter Programmablauf als Mermaid-Diagramm');
+    const box = (diagram.getAttribute('viewBox') || '').trim().split(/[ ,]+/).map(Number);
+    mermaidNaturalWidth = box[2] || Number(diagram.getAttribute('width')) || 800;
+    mermaidNaturalHeight = box[3] || Number(diagram.getAttribute('height')) || 600;
+    for (const [astId, mermaidId] of Object.entries(result.nodeIds)) {
+      const element = host.querySelector<SVGGElement>(`[id^="flowchart-${mermaidId}-"]`);
+      if (!element) continue;
+      element.setAttribute('data-fop-id', astId);
+      element.setAttribute('tabindex', '0');
+      element.setAttribute('role', 'button');
+      element.setAttribute('aria-label', label(doc, doc.nodes[astId]) || names[doc.nodes[astId].kind]);
+      element.setAttribute('aria-pressed', 'false');
+      const choose = () =>
+        safe(() => {
+          if (viewMode !== 'mermaid' || !doc.nodes[astId]) return;
+          pick(astId);
+          syncMermaidSelection();
+          status('Element im Mermaid-Diagramm ausgewählt.');
+        });
+      element.addEventListener('click', choose);
+      element.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          choose();
+        }
+      });
+    }
+    applyMermaidZoom();
+    syncMermaidSelection();
+    status('Mermaid-Diagramm aktualisiert.');
+  } catch (error) {
+    if (serial !== mermaidRenderSerial || doc !== renderingDoc || viewMode !== 'mermaid') return;
+    const messageText = document.createElement('p');
+    messageText.className = 'mermaid-error';
+    messageText.textContent = 'Mermaid-Diagramm konnte nicht dargestellt werden.\n' + String(error);
+    host.replaceChildren(messageText);
+  }
+}
+function scheduleMermaidRender() {
+  const serial = ++mermaidRenderSerial;
+  const renderingDoc = doc;
+  const host = $('mermaid-content');
+  const loading = document.createElement('p');
+  loading.className = 'mermaid-loading';
+  loading.textContent = 'Mermaid-Diagramm wird aufgebaut …';
+  host.replaceChildren(loading);
+  setTimeout(() => {
+    if (serial === mermaidRenderSerial && doc === renderingDoc && viewMode === 'mermaid')
+      void renderMermaidView(serial, renderingDoc);
+  }, 120);
+}
 function renderSource() {
   const isSource = doc.metadata.sourceReadOnly === 'true';
+  if (isSource) viewMode = 'structure';
+  const isMermaid = viewMode === 'mermaid' && !isSource;
+  $('structure-view').setAttribute('aria-pressed', String(!isMermaid));
+  $('mermaid-view').setAttribute('aria-pressed', String(isMermaid));
+  $<HTMLButtonElement>('mermaid-view').disabled = isSource;
   $('source-view').hidden = !isSource;
-  viewport.style.display = isSource ? 'none' : '';
-  $('quickbar').hidden = isSource || !!doc.view.readingMode || !selected;
+  $('mermaid-panel').hidden = !isMermaid;
+  viewport.style.display = isSource || isMermaid ? 'none' : '';
+  for (const id of [
+    'reading-mode',
+    'navigation-back',
+    'home',
+    'expand-below',
+    'collapse-below',
+    'collapse-all',
+    'expand-all',
+    'focus-up',
+    'case-layout-label',
+    'case-layout',
+    'breadcrumb',
+  ])
+    $(id).hidden = isMermaid;
+  $('edit-hint').hidden = isMermaid || !!doc.view.readingMode;
+  for (const id of ['mermaid-fit', 'mermaid-copy', 'mermaid-source', 'mermaid-svg']) $(id).hidden = !isMermaid;
+  $('quickbar').hidden = isSource || isMermaid || !!doc.view.readingMode || !selected;
+  if (isMermaid) scheduleMermaidRender();
+  else mermaidRenderSerial++;
   for (const id of ['save', 'save-as', 'export', 'preview', 'undo', 'redo'])
     $<HTMLButtonElement>(id).disabled =
       isSource ||
@@ -2117,5 +2326,5 @@ window.addEventListener('resize', () => fitInlineEditor());
 $('help').onclick = () =>
   message(
     'Arbeiten mit FOP Studio',
-    '1. ETF, SPX oder Projekt öffnen und den Zeichensatz anhand der Vorschau bestätigen.\n2. Links einen Bereich wählen oder im Programm suchen.\n3. Elemente auswählen und per Doppelklick oder Bearbeiten ändern. Pfeile klappen Strukturen ein und aus.\n4. Über + neue Elemente einfügen; vorhandene Blöcke kopieren oder verschieben.\n5. Als Projekt speichern, um später weiterzuarbeiten.\n6. Ausgabeprofil wählen, FOP-Vorschau prüfen und exportieren.\n\nGeöffnete Dateien werden nicht hochgeladen. Der Unterstützungslink öffnet eine externe Website und benötigt Internet.\n\nGenerierte Programme vor produktiver Nutzung in abas testen.\n\nDIREKT IM DIAGRAMM ARBEITEN\n+ zwischen Blöcken oder in einem leeren Zweig: Element einfügen.\nDoppelklick / F2: Text oder Bedingung direkt bearbeiten.\nKlick: ganzen Block auswählen. Shift+Klick: zusammenhängende Blöcke auswählen.\nStrg+C / Strg+X: kopieren / ausschneiden.\n+ Einfügestelle wählen, Strg+V: einsetzen.\nStrg+D: Auswahl vollständig duplizieren.\nLeiste unten: Auswahl mit IF oder Schleife umschliessen.\nGriff rechts am Block: auf eine + Stelle ziehen.\nStrg+Z / Strg+Y: Rückgängig / Wiederholen.\n\nIMPORT UND EXPORT\nWarum kann der Export eines importierten Programms gestoppt werden?\n\nManche Programme enthalten bereits Befehle, die Prozeduraufrufe und den Rücksprung zur Aufrufstelle verwalten. FOP Studio erzeugt diese Verwaltung selbst. Wenn zusätzlich Befehle der bisherigen Verwaltung vorhanden sind oder übernommener Code auf die von FOP Studio verwendeten Verwaltungsvariablen zugreift, können Konflikte entstehen. Deshalb stoppt FOP Studio den Export.\n\nDie Meldung nennt das betroffene Element, den gefundenen Befehl und, soweit verfügbar, die Quellzeile. Suche diese Stelle im Programm und prüfe, wofür sie verwendet wird. Entferne oder ändere sie nur, wenn geklärt ist, dass sie zur bisherigen Aufrufverwaltung gehört und nicht mehr benötigt wird. Nicht ungeprüft löschen: Andere Programmteile könnten davon abhängen.\n\nWenn die Verwendung unklar ist, lass die Stelle von einer mit dem Programm vertrauten Person prüfen. Danach erneut exportieren und das Ergebnis in einer abas-Testumgebung testen. FOP Studio entfernt solche Befehle nicht automatisch.',
+    '1. ETF, SPX oder Projekt öffnen und den Zeichensatz anhand der Vorschau bestätigen.\n2. Links einen Bereich wählen oder im Programm suchen.\n3. Elemente auswählen und per Doppelklick oder Bearbeiten ändern. Pfeile klappen Strukturen ein und aus.\n4. Über + neue Elemente einfügen; vorhandene Blöcke kopieren oder verschieben.\n5. Als Projekt speichern, um später weiterzuarbeiten.\n6. Ausgabeprofil wählen, FOP-Vorschau prüfen und exportieren.\n\nMERMAID-ANSICHT\nÜber Mermaid den gesamten Ablauf als Flowchart anzeigen. Ein Klick auf einen Knoten wählt das zugehörige FOP-Element aus. Einpassen und Zoom steuern die Darstellung. Mermaid kopieren, .mmd und SVG erzeugen Dateien zur Weiterverwendung. Die Mermaid-Ansicht ist read-only; bearbeitet wird im Struktogramm.\n\nGeöffnete Dateien werden nicht hochgeladen. Der Unterstützungslink öffnet eine externe Website und benötigt Internet.\n\nGenerierte Programme vor produktiver Nutzung in abas testen.\n\nDIREKT IM DIAGRAMM ARBEITEN\n+ zwischen Blöcken oder in einem leeren Zweig: Element einfügen.\nDoppelklick / F2: Text oder Bedingung direkt bearbeiten.\nKlick: ganzen Block auswählen. Shift+Klick: zusammenhängende Blöcke auswählen.\nStrg+C / Strg+X: kopieren / ausschneiden.\n+ Einfügestelle wählen, Strg+V: einsetzen.\nStrg+D: Auswahl vollständig duplizieren.\nLeiste unten: Auswahl mit IF oder Schleife umschliessen.\nGriff rechts am Block: auf eine + Stelle ziehen.\nStrg+Z / Strg+Y: Rückgängig / Wiederholen.\n\nIMPORT UND EXPORT\nWarum kann der Export eines importierten Programms gestoppt werden?\n\nManche Programme enthalten bereits Befehle, die Prozeduraufrufe und den Rücksprung zur Aufrufstelle verwalten. FOP Studio erzeugt diese Verwaltung selbst. Wenn zusätzlich Befehle der bisherigen Verwaltung vorhanden sind oder übernommener Code auf die von FOP Studio verwendeten Verwaltungsvariablen zugreift, können Konflikte entstehen. Deshalb stoppt FOP Studio den Export.\n\nDie Meldung nennt das betroffene Element, den gefundenen Befehl und, soweit verfügbar, die Quellzeile. Suche diese Stelle im Programm und prüfe, wofür sie verwendet wird. Entferne oder ändere sie nur, wenn geklärt ist, dass sie zur bisherigen Aufrufverwaltung gehört und nicht mehr benötigt wird. Nicht ungeprüft löschen: Andere Programmteile könnten davon abhängen.\n\nWenn die Verwendung unklar ist, lass die Stelle von einer mit dem Programm vertrauten Person prüfen. Danach erneut exportieren und das Ergebnis in einer abas-Testumgebung testen. FOP Studio entfernt solche Befehle nicht automatisch.',
   );
