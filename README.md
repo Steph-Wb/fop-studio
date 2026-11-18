@@ -12,12 +12,13 @@ FOP-Studio.html herunterladen und in einem aktuellen Edge oder Chrome öffnen. D
 - Bedingungen und Texte bearbeiten, Strukturen einfügen, kopieren, verschieben und einklappen.
 - Projekte als .fopproj speichern; FOP mit wählbarem Ausgabezeichensatz exportieren.
 - Mehrere Dateien, Suche, Prozedurnavigation, DE/EN-Strukturbegriffe und Lesemodus.
+- Gesamten Programmablauf als Mermaid-Diagramm anzeigen, Auswahl synchronisieren sowie Mermaid-Quelltext und SVG exportieren.
 
 Vorschauversion: Generiertes FOP vor produktiver Nutzung in abas prüfen. Automatisierte Tests ersetzen keine abas-Ausführungstests.
 
 ## Entwickeln
 
-Node.js 24 verwenden. Der Build benötigt keine Laufzeitbibliotheken.
+Node.js 24 verwenden. Die erzeugte HTML-Datei benötigt keine Laufzeitbibliotheken oder externen Dienste. Mermaid wird beim Build lokal eingebettet; die Lizenz ist in der HTML-Datei enthalten.
 
 ```sh
 npm ci

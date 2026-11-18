@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --disable-warning=ExperimentalWarning --test tests/core.test.mjs tests/session.test.mjs tests/spx.test.mjs tests/procedures.test.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/core.test.mjs tests/mermaid.test.mjs tests/session.test.mjs tests/spx.test.mjs tests/procedures.test.mjs",
     "check": "tsc --noEmit",
     "build:site": "node build-site.mjs",
     "lint": "eslint .",
@@ -14,8 +14,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "esbuild": "^0.28.2",
     "eslint": "^10.15.0",
     "globals": "^17.14.0",
+    "mermaid": "^11.12.3",
     "prettier": "^3.10.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.73.0"
