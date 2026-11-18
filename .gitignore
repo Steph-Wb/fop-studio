@@ -1,0 +1,9 @@
+node_modules/
+dist/
+site/
+validation/
+*.fopproj
+*.spx
+*.SPX
+*.etf
+*.ETF

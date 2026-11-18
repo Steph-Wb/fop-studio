@@ -1,0 +1,19 @@
+{
+  "name": "fop-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/core.test.mjs tests/session.test.mjs tests/spx.test.mjs tests/procedures.test.mjs",
+    "check": "tsc --noEmit",
+    "build:site": "node build-site.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  }
+}
