@@ -121,7 +121,7 @@ test('classic FO labels are unique in their first seven characters', () => {
     h = new c.History(d);
   for (let i = 0; i < 12; i++) h.insert('If', { parent: null, slot: 'roots', index: d.roots.length });
   d.profile.encoding = 'cp850';
-  const labels = [...exportAt(d).text.matchAll(/^(\w+)/gm)].map((m) => m[1]);
+  const labels = [...exportAt(d).text.matchAll(/^!(\w+)/gm)].map((m) => m[1]);
   assert.equal(labels.length, 12);
   assert.ok(labels.every((x) => x.length <= 7));
   assert.equal(new Set(labels.map((x) => x.slice(0, 7))).size, 12);
