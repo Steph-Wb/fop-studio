@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as c from '../src/core.ts';
 const exportAt = (d) => c.exportFOP(d, new Date('2026-11-17T12:00:00Z'));
 test('encoding roundtrip and rejection', () => {
-  for (const enc of ['cp850', 'cp437', 'windows-1252', 'utf-8'])
+  for (const enc of ['cp850', 'cp437', 'windows-125-2', 'utf-8'])
     assert.equal(c.decode(c.encode('für ÄÖÜ äöü ß', enc), enc), 'für ÄÖÜ äöü ß');
   assert.throws(() => c.encode('😀', 'cp850'));
   assert.throws(() => c.encode('x', 'unconfirmed'));
@@ -326,7 +326,7 @@ test('repeat tests at footer, while at header, folded repeat retains condition i
     assert.equal(c.diagramHeader(d, d.nodes[r], true), 'zaehler = 3');
     assert.equal(c.diagramFooter(d, d.nodes[r]), (language === 'de' ? 'Beenden, wenn: ' : 'Until: ') + 'zaehler = 3');
     assert.equal(c.diagramHeader(d, d.nodes[w], false), 'zaehler < 3');
-   .assert.equal(c.diagramFooter(d, d.nodes[w]), '');
+    assert.equal(c.diagramFooter(d, d.nodes[w]), '');
     const open = c.layout(d, null, new Set());
     assert.equal(open.byId.get(r).head, c.diagramTypography.headerSpace);
     assert.ok(open.byId.get(r).foot > 0);
