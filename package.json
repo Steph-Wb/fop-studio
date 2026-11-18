@@ -7,10 +7,18 @@
     "build": "node build.mjs",
     "test": "node --disable-warning=ExperimentalWarning --test tests/core.test.mjs tests/session.test.mjs tests/spx.test.mjs tests/procedures.test.mjs",
     "check": "tsc --noEmit",
-    "build:site": "node build-site.mjs"
+    "build:site": "node build-site.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.73.0"
   },
   "license": "MIT",
   "engines": {
