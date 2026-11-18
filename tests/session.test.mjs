@@ -103,7 +103,7 @@ function session() {
   const code = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
   vm.runInContext(
     code +
-      '\nglobalThis.api={get, emptyDocument, addNode, setDocument, switchTab, removeTab, saveActive, exportToFile, writeExport, loadProject, projectJSON, readOpenedFile, includeName, jumpName, jumpTargets, copySelection, pasteAt, goToJump, goToProcedure, navigationBack, foldBelow, editNode, handleDiagramClick, get collapsed(){return collapsed}, pick, tabs, get doc(){return doc}, get history(){return history}, get active(){return activeTab}, markDirty};'.replace(
+      '\nglobalThis.api={get, emptyDocument, addNode, setDocument, switchTab, removeTab, saveActive, exportToFile, writeExport, loadProject, projectJSON, readOpenedFile, includeName, jumpName, jumpTargets, copySelection, pasteAt, goToJump, goToProcedure, navigationBack, foldBelow, editNode, handleDiagramClick, get collapsed(){return collapsed}, pick, tabs, setViewMode, currentMermaidResult, get viewMode(){return viewMode}, get doc(){return doc}, get history(){return history}, get active(){return activeTab}, markDirty};'.replace(
         'get, emptyDocument',
         'emptyDocument',
       ),
@@ -591,4 +591,48 @@ test('code language selector is independent, tab-specific, and used for the fres
       .join('\n'),
     text,
   );
+});
+
+test('Mermaid view shows the whole document and survives tab switches', () => {
+  const { api, get } = session();
+  const first = api.emptyDocument('Ablauf');
+  const a = api.addNode(first, 'Text'),
+    b = api.addNode(first, 'Text');
+  a.text = 'erster Schritt';
+  b.text = 'zweiter Schritt';
+  first.roots.push(a.id, b.id);
+  api.setDocument(first);
+  const firstTab = api.active;
+  api.collapsed.add(a.id);
+  first.view.focus = a.id;
+  api.setViewMode('mermaid');
+  assert.equal(api.viewMode, 'mermaid');
+  assert.equal(get('mermaid-view').attrs['aria-pressed'], 'true');
+  assert.equal(get('mermaid-panel').hidden, false);
+  assert.equal(get('viewport').style.display, 'none');
+  assert.equal(get('quickbar').hidden, true);
+  const code = api.currentMermaidResult().code;
+  assert.ok(code.includes('erster Schritt'));
+  assert.ok(code.includes('zweiter Schritt'));
+
+  const second = api.emptyDocument('Zweites Dokument');
+  const c = api.addNode(second, 'Text');
+  c.text = 'anderes Dokument';
+  second.roots.push(c.id);
+  api.setDocument(second);
+  assert.equal(api.viewMode, 'structure');
+  api.switchTab(firstTab);
+  assert.equal(api.viewMode, 'mermaid');
+  assert.ok(api.currentMermaidResult().code.includes('zweiter Schritt'));
+  api.setViewMode('structure');
+  assert.equal(get('mermaid-panel').hidden, true);
+  assert.equal(get('viewport').style.display, '');
+
+  const source = api.emptyDocument('Quelle');
+  source.metadata.sourceReadOnly = 'true';
+  source.metadata.sourceOnly = '.formel x = 1';
+  api.setDocument(source);
+  api.setViewMode('mermaid');
+  assert.equal(api.viewMode, 'structure');
+  assert.equal(get('mermaid-view').disabled, true);
 });
