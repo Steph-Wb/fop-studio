@@ -1,40 +1,594 @@
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
-function session(){
-class Element{constructor(){this.value='';this.children=[];this.style={};this.classList={toggle(){},add(){},remove(){}};this.hidden=false;this.open=false;this.scrollLeft=0;this.scrollTop=0;this.clientWidth=900;this.clientHeight=600;this.offsetWidth=300;this.offsetHeight=150;this.attrs={};}append(...xs){this.children.push(...xs);}replaceChildren(...xs){this.children=xs;}setAttribute(k,v){this.attrs[k]=v;}getAttribute(k){return this.attrs[k];}addEventListener(){}querySelector(){return new Element();}scrollTo(x,y){this.scrollLeft=x;this.scrollTop=y;}showModal(){this.open=true;}close(){this.open=false;}scrollIntoView(){}focus(){}select(){}click(){this.onclick?.();}remove(){}closest(){return null;}getBoundingClientRect(){return {left:0,top:0};}}
-const els=new Map();const get=id=>{if(!els.has(id)){const e=new Element();e.parentElement=new Element();els.set(id,e);}return els.get(id);};get('input-encoding').value='cp850';
-const win={addEventListener(){}};const context=vm.createContext({document:{getElementById:get,createElement:()=>new Element(),createElementNS:()=>new Element(),createTextNode:t=>t,body:new Element(),addEventListener(){}},window:win,HTMLElement:Element,HTMLInputElement:Element,HTMLTextAreaElement:Element,ResizeObserver:class{observe(){}},requestAnimationFrame:()=>1,setTimeout:()=>1,innerWidth:1400,innerHeight:900,structuredClone,TextDecoder,TextEncoder,Uint8Array,Blob,URL,confirm:()=>true,console});
-const html=fs.readFileSync(new URL('../dist/FOP-Studio.html',import.meta.url),'utf8');const code=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];vm.runInContext(code+'\nglobalThis.api={get, emptyDocument, addNode, setDocument, switchTab, removeTab, saveActive, exportToFile, writeExport, loadProject, projectJSON, readOpenedFile, includeName, jumpName, jumpTargets, copySelection, pasteAt, goToJump, goToProcedure, navigationBack, foldBelow, editNode, handleDiagramClick, get collapsed(){return collapsed}, pick, tabs, get doc(){return doc}, get history(){return history}, get active(){return activeTab}, markDirty};'.replace('get, emptyDocument','emptyDocument'),context);return {api:context.api,win,get};}
-test('tabs preserve independent histories and source tabs',()=>{const {api}=session();const d=api.emptyDocument('A');const n=api.addNode(d,'Text');d.roots.push(n.id);api.setDocument(d);const id=api.active;api.history.text(n.id,'changed');api.markDirty();const source=api.emptyDocument('B');source.metadata.sourceReadOnly='true';source.metadata.sourceOnly='.ein C';api.setDocument(source);const second=api.active;api.setDocument(api.emptyDocument('C'));assert.ok(api.tabs.some(t=>t.id===second));api.switchTab(id);assert.equal(api.doc.nodes[n.id].text,'changed');api.history.undo();assert.equal(api.doc.nodes[n.id].text,'');api.removeTab(second);assert.equal(api.tabs.length,2);});
-test('save reuses handle and write failure preserves dirty state',async()=>{const {api,win}=session();const d=api.emptyDocument('A');api.setDocument(d,true);let picked=0,written=0;const handle={name:'A.fopproj',createWritable:async()=>({write:async text=>{assert.equal(JSON.parse(text).name,'A');written++;},close:async()=>{}})};win.showSaveFilePicker=async()=>{picked++;return handle;};assert.equal(await api.saveActive(),true);api.markDirty();assert.equal(await api.saveActive(),true);assert.equal(picked,1);assert.equal(written,2);api.markDirty();handle.createWritable=async()=>{throw Error('denied');};assert.equal(await api.saveActive(),false);assert.ok(api.tabs.find(t=>t.id===api.active).dirty);});
-test('include recognition supports abbreviated and full commands, excludes comments and text option',()=>{const {api}=session();assert.equal(api.includeName('.ein DEMO101'),'DEMO101');assert.equal(api.includeName('.eingabe owfop/DEMO'),'owfop/DEMO');assert.equal(api.includeName('.input TEST'),'TEST');assert.equal(api.includeName('..ein TEST'),null);assert.equal(api.includeName('.ein -TEXT field'),null);});
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+function session() {
+  class Element {
+    constructor() {
+      this.value = '';
+      this.children = [];
+      this.style = {};
+      this.classList = { toggle() {}, add() {}, remove() {} };
+      this.hidden = false;
+      this.open = false;
+      this.scrollLeft = 0;
+      this.scrollTop = 0;
+      this.clientWidth = 900;
+      this.clientHeight = 600;
+      this.offsetWidth = 300;
+      this.offsetHeight = 150;
+      this.attrs = {};
+    }
+    append(...xs) {
+      this.children.push(...xs);
+    }
+    replaceChildren(...xs) {
+      this.children = xs;
+    }
+    setAttribute(k, v) {
+      this.attrs[k] = v;
+    }
+    getAttribute(k) {
+      return this.attrs[k];
+    }
+    addEventListener() {}
+    querySelector() {
+      return new Element();
+    }
+    scrollTo(x, y) {
+      this.scrollLeft = x;
+      this.scrollTop = y;
+    }
+    showModal() {
+      this.open = true;
+    }
+    close() {
+      this.open = false;
+    }
+    scrollIntoView() {}
+    focus() {}
+    select() {}
+    click() {
+      this.onclick?.();
+    }
+    remove() {}
+    closest() {
+      return null;
+    }
+    getBoundingClientRect() {
+      return { left: 0, top: 0 };
+    }
+  }
+  const els = new Map();
+  const get = (id) => {
+    if (!els.has(id)) {
+      const e = new Element();
+      e.parentElement = new Element();
+      els.set(id, e);
+    }
+    return els.get(id);
+  };
+  get('input-encoding').value = 'cp850';
+  const win = { addEventListener() {} };
+  const context = vm.createContext({
+    document: {
+      getElementById: get,
+      createElement: () => new Element(),
+      createElementNS: () => new Element(),
+      createTextNode: (t) => t,
+      body: new Element(),
+      addEventListener() {},
+    },
+    window: win,
+    HTMLElement: Element,
+    HTMLInputElement: Element,
+    HTMLTextAreaElement: Element,
+    ResizeObserver: class {
+      observe() {}
+    },
+    requestAnimationFrame: () => 1,
+    setTimeout: () => 1,
+    innerWidth: 1400,
+    innerHeight: 900,
+    structuredClone,
+    TextDecoder,
+    TextEncoder,
+    Uint8Array,
+    Blob,
+    URL,
+    confirm: () => true,
+    console,
+  });
+  const html = fs.readFileSync(new URL('../dist/FOP-Studio.html', import.meta.url), 'utf8');
+  const code = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
+  vm.runInContext(
+    code +
+      '\nglobalThis.api={get, emptyDocument, addNode, setDocument, switchTab, removeTab, saveActive, exportToFile, writeExport, loadProject, projectJSON, readOpenedFile, includeName, jumpName, jumpTargets, copySelection, pasteAt, goToJump, goToProcedure, navigationBack, foldBelow, editNode, handleDiagramClick, get collapsed(){return collapsed}, pick, tabs, get doc(){return doc}, get history(){return history}, get active(){return activeTab}, markDirty};'.replace(
+        'get, emptyDocument',
+        'emptyDocument',
+      ),
+    context,
+  );
+  return { api: context.api, win, get };
+}
+test('tabs preserve independent histories and source tabs', () => {
+  const { api } = session();
+  const d = api.emptyDocument('A');
+  const n = api.addNode(d, 'Text');
+  d.roots.push(n.id);
+  api.setDocument(d);
+  const id = api.active;
+  api.history.text(n.id, 'changed');
+  api.markDirty();
+  const source = api.emptyDocument('B');
+  source.metadata.sourceReadOnly = 'true';
+  source.metadata.sourceOnly = '.ein C';
+  api.setDocument(source);
+  const second = api.active;
+  api.setDocument(api.emptyDocument('C')));
+  assert.ok(api.tabs.some((t) => t.id === second));
+  api.switchTab(id);
+  assert.equal(api.doc.nodes[n.id].text, 'changed');
+  api.history.undo();
+  assert.equal(api.doc.nodes[n.id].text, '');
+  api.removeTab(second);
+  assert.equal(api.tabs.length, 2);
+});
+test('save reuses handle and write failure preserves dirty state', async () => {
+  const { api, win } = session();
+  const d = api.emptyDocument('A');
+  api.setDocument(d, true);
+  let picked = 0,
+    written = 0;
+  const handle = {
+    name: 'A.fopproj',
+    createWritable: async () => ({
+      write: async (text) => {
+        assert.equal(JSON.parse(text).name, 'A');
+        written++;
+      },
+      close: async () => {},
+    }),
+  };
+  win.showSaveFilePicker = async () => {
+    picked++;
+    return handle;
+  };
+  assert.equal(await api.saveActive(), true);
+  api.markDirty();
+  assert.equal(await api.saveActive(), true);
+  assert.equal(picked, 1);
+  assert.equal(written, 2);
+  api.markDirty();
+  handle.createWritable = async () => {
+    throw Error('denied');
+  };
+  assert.equal(await api.saveActive(), false);
+  assert.ok(api.tabs.find((t) => t.id === api.active).dirty);
+});
+test('include recognition supports abbreviated and full commands, excludes comments and text option', () => {
+  const { api } = session();
+  assert.equal(api.includeName('.ein DEMO101'), 'DEMO101');
+  assert.equal(api.includeName('.eingabe owfop/DEMO'), 'owfop/DEMO');
+  assert.equal(api.includeName('.input TEST'), 'TEST');
+  assert.equal(api.includeName('..ein TEST'), null);
+  assert.equal(api.includeName('.ein -TEXT field'), null);
+});
 
-test('weiter resolves seven-character labels and reveals folded diagram targets',()=>{const {api}=session();const d=api.emptyDocument('Sprünge');const group=api.addNode(d,'Frame'),head=api.addNode(d,'Text'),target=api.addNode(d,'Text');head.text='.ein DATEI.F';group.slots.header.push(head.id);target.text='!AA00001: Ziel';group.slots.body.push(target.id);d.roots.push(group.id);api.setDocument(d);api.collapsed.add(group.id);assert.equal(api.jumpName('.weiter AA00001'),'AA00001');assert.equal(api.jumpName('.we "AA00001"'),'AA00001');assert.equal(api.jumpName('..weiter AA00001'),null);assert.equal(api.jumpName('.weiter'),null);assert.equal(api.jumpTargets('aa00001suffix')[0].id,target.id);api.goToJump('AA00001');assert.equal(api.collapsed.has(group.id),false);const duplicate=api.addNode(d,'Text');duplicate.text='!AA00001extra';d.roots.push(duplicate.id);assert.equal(api.jumpTargets('AA00001').length,2);});
-test('frame headers offer include links and jump links in the diagram',()=>{const {api,get}=session();const d=api.emptyDocument('Rahmen');const frame=api.addNode(d,'Frame'),head=api.addNode(d,'Text');head.text='.aus auf dnlad\n.ein DATEI.F\n.weiter ENDE';frame.slots.header.push(head.id);d.roots.push(frame.id);api.setDocument(d);const attrs=[];const todo=[get('diagram')];while(todo.length){const e=todo.pop();if(e?.attrs)attrs.push(e.attrs);if(e?.children)todo.push(...e.children);}assert.ok(attrs.some(a=>a['data-include']==='DATEI.F'));assert.ok(attrs.some(a=>a['data-jump']==='ENDE'));api.pick(frame.id);});
-test('source jumps locate the exact line and missing targets do not navigate',()=>{const {api,get}=session();const d=api.emptyDocument('Quelle');d.metadata.sourceReadOnly='true';d.metadata.sourceOnly='.weiter ENDE\nText\n!ENDE: Ende';api.setDocument(d);assert.equal(api.jumpTargets('ENDE')[0].line,2);api.goToJump('ENDE');assert.equal(get('source-view').children[2].attrs.tabindex,'-1');api.goToJump('FEHLT');assert.equal(get('message-dialog').open,true);});
+test('weiter resolves seven-character labels and reveals folded diagram targets', () => {
+  const { api } = session();
+  const d = api.emptyDocument('Sprünge');
+  const group = api.addNode(d, 'Frame'),
+    head = api.addNode(d, 'Text'),
+    target = api.addNode(d, 'Text');
+  head.text = '.ein DATEI.F';
+  group.slots.header.push(head.id);
+  target.text = '!AA00001: Ziel';
+  group.slots.body.push(target.id);
+  d.roots.push(group.id);
+  api.setDocument(d);
+  api.collapsed.add(group.id);
+  assert.equal(api.jumpName('.weiter AA00001'), 'AA00001');
+  assert.equal(api.jumpName('.we "AA00001"'), 'AA00001');
+  assert.equal(api.jumpName('..weiter AA00001'), null);
+  assert.equal(api.jumpName('.weiter'), null);
+  assert.equal(api.jumpTargets('aa00001suffix')[0].id, target.id);
+  api.goToJump('AA00001');
+  assert.equal(api.collapsed.has(group.id), false);
+  const duplicate = api.addNode(d, 'Text');
+  duplicate.text = '!AA00001extra';
+  d.roots.push(duplicate.id);
+  assert.equal(api.jumpTargets('AA00001').length, 2);
+});
+test('frame headers offer include links and jump links in the diagram', () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Rahmen');
+  const frame = api.addNode(d, 'Frame'),
+    head = api.addNode(d, 'Text');
+  head.text = '.aus auf dnlad\n.ein DATEI.F\n.weiter ENDE';
+  frame.slots.header.push(head.id);
+  d.roots.push(frame.id);
+  api.setDocument(d);
+  const attrs = [];
+  const todo = [get('diagram')];
+  while (todo.length) {
+    const e = todo.pop();
+    if (e?.attrs) attrs.push(e.attrs);
+    if (e?.children) todo.push(...e.children);
+  }
+  assert.ok(attrs.some((a) => a['data-include'] === 'DATEI.F'));
+  assert.ok(attrs.some((a) => a['data-jump'] === 'ENDE'));
+  api.pick(frame.id);
+});
+test('source jumps locate the exact line and missing targets do not navigate', () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Quelle');
+  d.metadata.sourceReadOnly = 'true';
+  d.metadata.sourceOnly = '.weiter ENDE\nText\n!ENDE: Ende';
+  api.setDocument(d);
+  assert.equal(api.jumpTargets('ENDE')[0].line, 2);
+  api.goToJump('ENDE');
+  assert.equal(get('source-view').children[2].attrs.tabindex, '-1');
+  api.goToJump('FEHLT');
+  assert.equal(get('message-dialog').open, true);
+});
 
-test('fold below only changes descendants and keeps the selected area open',()=>{const {api}=session();const d=api.emptyDocument('Bereiche');const a=api.addNode(d,'Block'),b=api.addNode(d,'Block'),child=api.addNode(d,'Block'),deep=api.addNode(d,'Block');for(const n of [a,b,child,deep]){const h=api.addNode(d,'Text');h.text='Bereich';n.slots.header=[h.id];}d.roots=[a.id,b.id];a.slots.body=[child.id];child.slots.body=[deep.id];api.setDocument(d);api.collapsed.add(b.id);api.pick(a.id);api.foldBelow(true);assert.equal(api.collapsed.has(a.id),false);assert.equal(api.collapsed.has(child.id),true);assert.equal(api.collapsed.has(deep.id),true);assert.equal(api.collapsed.has(b.id),true);api.foldBelow(false);assert.equal(api.collapsed.has(child.id),false);assert.equal(api.collapsed.has(deep.id),false);assert.equal(api.collapsed.has(b.id),true);assert.deepEqual(Array.from(d.view.collapsed),[b.id]);});
+test('fold below only changes descendants and keeps the selected area open', () => {
+  const { api } = session();
+  const d = api.emptyDocument('Bereiche');
+  const a = api.addNode(d, 'Block'),
+    b = api.addNode(d, 'Block'),
+    child = api.addNode(d, 'Block'),
+    deep = api.addNode(d, 'Block');
+  for (const n of [a, b, child, deep]) {
+    const h = api.addNode(d, 'Text');
+    h.text = 'Bereich';
+    n.slots.header = [h.id];
+  }
+  d.roots = [a.id, b.id];
+  a.slots.body = [child.id];
+  child.slots.body = [deep.id];
+  api.setDocument(d);
+  api.collapsed.add(b.id);
+  api.pick(a.id);
+  api.foldBelow(true);
+  assert.equal(api.collapsed.has(a.id), false);
+  assert.equal(api.collapsed.has(child.id), true);
+  assert.equal(api.collapsed.has(deep.id), true);
+  assert.equal(api.collapsed.has(b.id), true);
+  api.foldBelow(false);
+  assert.equal(api.collapsed.has(child.id), false);
+  assert.equal(api.collapsed.has(deep.id), false);
+  assert.equal(api.collapsed.has(b.id), true);
+  assert.deepEqual(Array.from(d.view.collapsed), [b.id]);
+});
 
-test('repeat NOT condition opens, edits, and undoes without losing its expression tree',()=>{const {api,get}=session();const d=api.emptyDocument('Bedingung'),loop=api.addNode(d,'Repeat'),not=api.addNode(d,'Not'),leaf=api.addNode(d,'Text');leaf.text='m100xb1';not.slots.operands=[leaf.id];loop.slots.condition=[not.id];d.roots=[loop.id];api.setDocument(d);api.editNode(loop.id);assert.equal(get('inline-editor').hidden,false);assert.equal(get('inline-text').value,'NICHT (m100xb1)');get('inline-apply').onclick();assert.equal(api.history.undoStack.length,0);api.editNode(loop.id);get('inline-text').value='NICHT (m100xb2)';get('inline-apply').onclick();assert.equal(d.nodes[not.id].kind,'Not');assert.equal(d.nodes[d.nodes[not.id].slots.operands[0]].text,'m100xb2');assert.equal(d.nodes[leaf.id],undefined);api.history.undo();assert.equal(d.nodes[not.id].kind,'Not');assert.equal(d.nodes[leaf.id].text,'m100xb1');api.editNode(loop.id);get('inline-text').value='';get('inline-apply').onclick();assert.equal(get('message-dialog').open,true);assert.equal(d.nodes[not.id].kind,'Not');});
+test('repeat NOT condition opens, edits, and undoes without losing its expression tree', () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Bedingung'),
+    loop = api.addNode(d, 'Repeat'),
+    not = api.addNode(d, 'Not'),
+    leaf = api.addNode(d, 'Text');
+  leaf.text = 'm100xb1';
+  not.slots.operands = [leaf.id];
+  loop.slots.condition = [not.id];
+  d.roots = [loop.id];
+  api.setDocument(d);
+  api.editNode(loop.id);
+  assert.equal(get('inline-editor').hidden, false);
+  assert.equal(get('inline-text').value, 'NICHT (m100xb1)');
+  get('inline-apply').onclick();
+  assert.equal(api.history.undoStack.length, 0);
+  api.editNode(loop.id);
+  get('inline-text').value = 'NICHT (m100xb2)';
+  get('inline-apply').onclick();
+  assert.equal(d.nodes[not.id].kind, 'Not');
+  assert.equal(d.nodes[d.nodes[not.id].slots.operands[0]].text, 'm100xb2');
+  assert.equal(d.nodes[leaf.id], undefined);
+  api.history.undo();
+  assert.equal(d.nodes[not.id].kind, 'Not');
+  assert.equal(d.nodes[leaf.id].text, 'm100xb1');
+  api.editNode(loop.id);
+  get('inline-text').value = '';
+  get('inline-apply').onclick();
+  assert.equal(get('message-dialog').open, true);
+  assert.equal(d.nodes[not.id].kind, 'Not');
+});
 
-test('double click survives replaced diagram elements and ignores separate clicks',()=>{const {api,get}=session();const d=api.emptyDocument('Klick'),a=api.addNode(d,'Text'),b=api.addNode(d,'Text');a.text='A';b.text='B';d.roots=[a.id,b.id];api.setDocument(d);const click=(id,time,x=100)=>api.handleDiagramClick({target:{closest:selector=>selector==='[data-id]'?{getAttribute:()=>id}:null},timeStamp:time,clientX:x,clientY:100,shiftKey:false});click(a.id,1000);assert.equal(get('inline-editor').hidden,true);click(a.id,1200);assert.equal(get('inline-editor').hidden,false);assert.equal(get('inline-text').value,'A');get('inline-cancel').onclick();click(a.id,2000);click(b.id,2100);assert.equal(get('inline-editor').hidden,true);click(b.id,3000);assert.equal(get('inline-editor').hidden,true);click(b.id,3200,150);assert.equal(get('inline-editor').hidden,true);click(b.id,3400,150);assert.equal(get('inline-editor').hidden,false);assert.equal(get('inline-text').value,'B');});
+test('double click survives replaced diagram elements and ignores separate clicks', () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Klick'),
+    a = api.addNode(d, 'Text'),
+    b = api.addNode(d, 'Text');
+  a.text = 'A';
+  b.text = 'B';
+  d.roots = [a.id, b.id];
+  api.setDocument(d);
+  const click = (id, time, x = 100) =>
+    api.handleDiagramClick({
+      target: { closest: (selector) => (selector === '[data-id]' ? { getAttribute: () => id } : null) },
+      timeStamp: time,
+      clientX: x,
+      clientY: 100,
+      shiftKey: false,
+    });
+  click(a.id, 1000);
+  assert.equal(get('inline-editor').hidden, true);
+  click(a.id, 1200);
+  assert.equal(get('inline-editor').hidden, false);
+  assert.equal(get('inline-text').value, 'A');
+  get('inline-cancel').onclick();
+  click(a.id, 2000);
+  click(b.id, 2100);
+  assert.equal(get('inline-editor').hidden, true);
+  click(b.id, 3000);
+  assert.equal(get('inline-editor').hidden, true);
+  click(b.id, 3200, 150);
+  assert.equal(get('inline-editor').hidden, true);
+  click(b.id, 3400, 150);
+  assert.equal(get('inline-editor').hidden, false);
+  assert.equal(get('inline-text').value, 'B');
+});
 
-test('procedure navigation restores caller view and supports nested calls per tab',()=>{const {api,get}=session();const d=api.emptyDocument('Prozeduren');const make=(kind,name)=>{const n=api.addNode(d,kind),h=api.addNode(d,'Text');h.text=name;n.slots.header=[h.id];return n;};const caller=make('Call','A'),a=make('Procedure','A'),nested=make('Call','B'),b=make('Procedure','B');a.slots.body=[nested.id];d.roots=[caller.id,a.id,b.id];api.setDocument(d);const originalTab=api.active;api.collapsed.add(b.id);get('viewport').scrollTo(80,450);api.goToProcedure(caller.id);assert.equal(d.view.focus,a.id);assert.equal(get('navigation-back').disabled,false);get('viewport').scrollTo(10,120);api.goToProcedure(nested.id);assert.equal(d.view.focus,b.id);api.navigationBack();assert.equal(d.view.focus,a.id);assert.equal(get('viewport').scrollTop,120);api.setDocument(api.emptyDocument('Andere Datei'));assert.equal(get('navigation-back').disabled,true);api.switchTab(originalTab);api.navigationBack();assert.equal(d.view.focus,null);assert.equal(get('viewport').scrollTop,450);assert.equal(get('viewport').scrollLeft,80);assert.equal(api.collapsed.has(b.id),true);assert.equal(get('navigation-back').disabled,true);assert.equal(api.history.undoStack.length,0);});
+test('procedure navigation restores caller view and supports nested calls per tab', () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Prozeduren');
+  const make = (kind, name) => {
+    const n = api.addNode(d, kind),
+      h = api.addNode(d, 'Text');
+    h.text = name;
+    n.slots.header = [h.id];
+    return n;
+  };
+  const caller = make('Call', 'A'),
+    a = make('Procedure', 'A'),
+    nested = make('Call', 'B'),
+    b = make('Procedure', 'B');
+  a.slots.body = [nested.id];
+  d.roots = [caller.id, a.id, b.id];
+  api.setDocument(d);
+  const originalTab = api.active;
+  api.collapsed.add(b.id);
+  get('viewport').scrollTo(80, 450);
+  api.goToProcedure(caller.id);
+  assert.equal(d.view.focus, a.id);
+  assert.equal(get('navigation-back').disabled, false);
+  get('viewport').scrollTo(10, 120);
+  api.goToProcedure(nested.id);
+  assert.equal(d.view.focus, b.id);
+  api.navigationBack();
+  assert.equal(d.view.focus, a.id);
+  assert.equal(get('viewport').scrollTop, 120);
+  api.setDocument(api.emptyDocument('Andere Datei'));
+  assert.equal(get('navigation-back').disabled, true);
+  api.switchTab(originalTab);
+  api.navigationBack();
+  assert.equal(d.view.focus, null);
+  assert.equal(get('viewport').scrollTop, 450);
+  assert.equal(get('viewport').scrollLeft, 80);
+  assert.equal(api.collapsed.has(b.id), true);
+  assert.equal(get('navigation-back').disabled, true);
+  assert.equal(api.history.undoStack.length, 0);
+});
 
-test('FOP export asks for a destination every time and writes encoded bytes without saving the project',async()=>{const {api,win}=session();const d=api.emptyDocument('TEST.EFOP'),n=api.addNode(d,'Text');n.text='.fo x = "für"';d.roots=[n.id];d.profile.encoding='cp850';api.setDocument(d,true);let picked=0,closed=0;win.showSaveFilePicker=async opts=>{picked++;assert.equal(opts.suggestedName,'TEST.EFOP');return {name:'TEST.EFOP',createWritable:async()=>({write:async bytes=>{assert.ok(bytes instanceof Uint8Array);assert.ok(bytes.includes(129));},close:async()=>{closed++;}})};};assert.equal(await api.exportToFile(),true);assert.equal(await api.exportToFile(),true);assert.equal(picked,2);assert.equal(closed,2);assert.equal(api.tabs.find(t=>t.id===api.active).dirty,true);win.showSaveFilePicker=async()=>{throw Object.assign(Error('cancel'),{name:'AbortError'});};assert.equal(await api.exportToFile(),false);assert.equal(closed,2);win.showSaveFilePicker=async()=>({name:'TEST.EFOP',createWritable:async()=>{throw Error('denied');}});assert.equal(await api.exportToFile(),false);});
+test('FOP export asks for a destination every time and writes encoded bytes without saving the project', async () => {
+  const { api, win } = session();
+  const d = api.emptyDocument('TEST.EFOP'),
+    n = api.addNode(d, 'Text');
+  n.text = '.fo x = "für"';
+  d.roots = [n.id];
+  d.profile.encoding = 'cp850';
+  api.setDocument(d, true);
+  let picked = 0,
+    closed = 0;
+  win.showSaveFilePicker = async (opts) => {
+    picked++;
+    assert.equal(opts.suggestedName, 'TEST.EFOP');
+    return {
+      name: 'TEST.EFOP',
+      createWritable: async () => ({
+        write: async (bytes) => {
+          assert.ok(bytes instanceof Uint8Array);
+          assert.ok(bytes.includes(129));
+        },
+        close: async () => {
+          closed++;
+        },
+      }),
+    };
+  };
+  assert.equal(await api.exportToFile(), true);
+  assert.equal(await api.exportToFile(), true);
+  assert.equal(picked, 2);
+  assert.equal(closed, 2);
+  assert.equal(api.tabs.find((t) => t.id === api.active).dirty, true);
+  win.showSaveFilePicker = async () => {
+    throw Object.assign(Error('cancel'), { name: 'AbortError' });
+  };
+  assert.equal(await api.exportToFile(), false);
+  assert.equal(closed, 2);
+  win.showSaveFilePicker = async () => ({
+    name: 'TEST.EFOP',
+    createWritable: async () => {
+      throw Error('denied');
+    },
+  });
+  assert.equal(await api.exportToFile(), false);
+});
 
-test('network InvalidStateError retries once with refreshed state and closes a fresh stream',async()=>{const {api}=session();let creates=0,refreshes=0,aborts=0;const handle={name:'NET',getFile:async()=>{refreshes++;},createWritable:async()=>{const attempt=++creates;return {write:async()=>{},close:async()=>{if(attempt===1)throw Object.assign(Error('stale'),{name:'InvalidStateError'});},abort:async()=>{aborts++;}};}};await api.writeExport(handle,new Uint8Array([129]));assert.equal(creates,2);assert.equal(refreshes,1);assert.equal(aborts,1);creates=0;handle.createWritable=async()=>{creates++;throw Object.assign(Error('stale'),{name:'InvalidStateError'});};await assert.rejects(api.writeExport(handle,new Uint8Array()),/stale/);assert.equal(creates,2);creates=0;handle.createWritable=async()=>{creates++;throw Error('denied');};await assert.rejects(api.writeExport(handle,new Uint8Array()),/denied/);assert.equal(creates,1);});
-test('successful export remembers per-project picker id and filename across project reload',async()=>{const {api,win}=session();const d=api.emptyDocument('Original');api.setDocument(d);const options=[];const handle={name:'CUSTOM.EFOP',createWritable:async()=>({write:async()=>{},close:async()=>{}})};win.showSaveFilePicker=async opts=>{options.push(opts);return handle;};assert.equal(await api.exportToFile(),true);assert.ok(d.metadata.fopExportPickerId);assert.equal(d.metadata.fopExportName,'CUSTOM.EFOP');await api.exportToFile();assert.equal(options[1].startIn,handle);assert.equal(options[1].suggestedName,'CUSTOM.EFOP');const restored=api.loadProject(api.projectJSON(d));api.setDocument(restored);await api.exportToFile();assert.equal(options[2].id,options[0].id);assert.equal(options[2].suggestedName,'CUSTOM.EFOP');assert.equal(options[2].startIn,undefined);api.setDocument(api.emptyDocument('Other'));await api.exportToFile();assert.notEqual(options[3].id,options[0].id);});
+test('network InvalidStateError retries once with refreshed state and closes a fresh stream', async () => {
+  const { api } = session();
+  let creates = 0,
+    refreshes = 0,
+    aborts = 0;
+  const handle = {
+    name: 'NET',
+    getFile: async () => {
+      refreshes++;
+    },
+    createWritable: async () => {
+      const attempt = ++creates;
+      return {
+        write: async () => {},
+        close: async () => {
+          if (attempt === 1) throw Object.assign(Error('stale'), { name: 'InvalidStateError' });
+        },
+        abort: async () => {
+          aborts++;
+        },
+      };
+    },
+  };
+  await api.writeExport(handle, new Uint8Array([129]));
+  assert.equal(creates, 2);
+  assert.equal(refreshes, 1);
+  assert.equal(aborts, 1);
+  creates = 0;
+  handle.createWritable = async () => {
+    creates++;
+    throw Object.assign(Error('stale'), { name: 'InvalidStateError' });
+  };
+  await assert.rejects(api.writeExport(handle, new Uint8Array()), /stale/);
+  assert.equal(creates, 2);
+  creates = 0;
+  handle.createWritable = async () => {
+    creates++;
+    throw Error('denied');
+  };
+  await assert.rejects(api.writeExport(handle, new Uint8Array()), /denied/);
+  assert.equal(creates, 1);
+});
+test('successful export remembers per-project picker id and filename across project reload', async () => {
+  const { api, win } = session();
+  const d = api.emptyDocument('Original');
+  api.setDocument(d);
+  const options = [];
+  const handle = {
+    name: 'CUSTOM.EFOP',
+    createWritable: async () => ({ write: async () => {}, close: async () => {} }),
+  };
+  win.showSaveFilePicker = async (opts) => {
+    options.push(opts);
+    return handle;
+  };
+  assert.equal(await api.exportToFile(), true);
+  assert.ok(d.metadata.fopExportPickerId);
+  assert.equal(d.metadata.fopExportName, 'CUSTOM.EFOP');
+  await api.exportToFile();
+  assert.equal(options[1].startIn, handle);
+  assert.equal(options[1].suggestedName, 'CUSTOM.EFOP');
+  const restored = api.loadProject(api.projectJSON(d));
+  api.setDocument(restored);
+  await api.exportToFile();
+  assert.equal(options[2].id, options[0].id);
+  assert.equal(options[2].suggestedName, 'CUSTOM.EFOP');
+  assert.equal(options[2].startIn, undefined);
+  api.setDocument(api.emptyDocument('Other'));
+  await api.exportToFile();
+  assert.notEqual(options[3].id, options[0].id);
+});
 
-test('copy includes pending inline changes and undo remains coherent',()=>{const {api,get}=session();const d=api.emptyDocument('Draft'),n=api.addNode(d,'Text');n.text='old';d.roots=[n.id];api.setDocument(d);api.pick(n.id);api.editNode(n.id);get('inline-text').value='new draft';api.copySelection(false);api.pasteAt({parent:null,slot:'roots',index:1});assert.equal(d.nodes[d.roots[1]].text,'new draft');assert.equal(d.nodes[n.id].text,'new draft');api.history.undo();assert.equal(d.roots.length,1);api.history.undo();assert.equal(d.nodes[n.id].text,'old');});
-test('edits made while save is pending are not marked as saved',async()=>{const {api,get,win}=session();const d=api.emptyDocument('Pending'),n=api.addNode(d,'Text');n.text='before';d.roots=[n.id];api.setDocument(d,true);let finish,started;const ready=new Promise(r=>{started=r;});win.showSaveFilePicker=async()=>({name:'Pending.fopproj',createWritable:async()=>({write:async()=>{started();await new Promise(r=>{finish=r;});},close:async()=>{}})});const saved=api.saveActive();await ready;api.editNode(n.id);get('inline-text').value='typed during save';finish();assert.equal(await saved,false);assert.equal(d.nodes[n.id].text,'typed during save');assert.ok(api.tabs.find(t=>t.id===api.active).dirty);});
-test('saving invalid pending condition reports error and keeps editor open',async()=>{const {api,get}=session();const d=api.emptyDocument('Invalid'),n=api.addNode(d,'If'),c=api.addNode(d,'Text');c.text='mehr';n.slots.condition=[c.id];d.roots=[n.id];api.setDocument(d);api.editNode(n.id);get('inline-text').value='x AND';assert.equal(await api.saveActive(),false);assert.equal(get('inline-editor').hidden,false);assert.equal(d.nodes[c.id].text,'mehr');assert.equal(get('message-dialog').open,true);});
-test('conditional static jumps are clickable but computed labels are not guessed',()=>{const {api}=session();assert.equal(api.jumpName('.weiter AA00001 ? _(mehr)'),'AA00001');assert.equal(api.jumpName('.we "TARGET" ? x = 1'),'TARGET');assert.equal(api.jumpName(".weiter 'xprocst.xprocsp'"),null);assert.equal(api.jumpName('..weiter AA00001 ? mehr'),null);});
+test('copy includes pending inline changes and undo remains coherent', () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Draft'),
+    n = api.addNode(d, 'Text');
+  n.text = 'old';
+  d.roots = [n.id];
+  api.setDocument(d);
+  api.pick(n.id);
+  api.editNode(n.id);
+  get('inline-text').value = 'new draft';
+  api.copySelection(false);
+  api.pasteAt({ parent: null, slot: 'roots', index: 1 });
+  assert.equal(d.nodes[d.roots[1]].text, 'new draft');
+  assert.equal(d.nodes[n.id].text, 'new draft');
+  api.history.undo();
+  assert.equal(d.roots.length, 1);
+  api.history.undo();
+  assert.equal(d.nodes[n.id].text, 'old');
+});
+test('edits made while save is pending are not marked as saved', async () => {
+  const { api, get, win } = session();
+  const d = api.emptyDocument('Pending'),
+    n = api.addNode(d, 'Text');
+  n.text = 'before';
+  d.roots = [n.id];
+  api.setDocument(d, true);
+  let finish, started;
+  const ready = new Promise((r) => {
+    started = r;
+  });
+  win.showSaveFilePicker = async () => ({
+    name: 'Pending.fopproj',
+    createWritable: async () => ({
+      write: async () => {
+        started();
+        await new Promise((r) => {
+          finish = r;
+        });
+      },
+      close: async () => {},
+    }),
+  });
+  const saved = api.saveActive();
+  await ready;
+  api.editNode(n.id);
+  get('inline-text').value = 'typed during save';
+  finish();
+  assert.equal(await saved, false);
+  assert.equal(d.nodes[n.id].text, 'typed during save');
+  assert.ok(api.tabs.find((t) => t.id === api.active).dirty);
+});
+test('saving invalid pending condition reports error and keeps editor open', async () => {
+  const { api, get } = session();
+  const d = api.emptyDocument('Invalid'),
+    n = api.addNode(d, 'If'),
+    c = api.addNode(d, 'Text');
+  c.text = 'mehr';
+  n.slots.condition = [c.id];
+  d.roots = [n.id];
+  api.setDocument(d);
+  api.editNode(n.id);
+  get('inline-text').value = 'x AND';
+  assert.equal(await api.saveActive(), false);
+  assert.equal(get('inline-editor').hidden, false);
+  assert.equal(d.nodes[c.id].text, 'mehr');
+  assert.equal(get('message-dialog').open, true);
+});
+test('conditional static jumps are clickable but computed labels are not guessed', () => {
+  const { api } = session();
+  assert.equal(api.jumpName('.weiter AA00001 ? _(mehr)'), 'AA00001');
+  assert.equal(api.jumpName('.we "TARGET" ? x = 1'), 'TARGET');
+  assert.equal(api.jumpName(".weiter 'xprocst.xprocsp'"), null);
+  assert.equal(api.jumpName('..weiter AA00001 ? mehr'), null);
+});
 
-
-test('code language selector is independent, tab-specific, and used for the fresh example',()=>{
- const {api,get}=session();api.setDocument(api.emptyDocument('English'));
- get('code-language').value='en';get('code-language').onchange();assert.equal(api.doc.profile.codeLanguage,'en');assert.notEqual(api.doc.view.language,'en');
- const first=api.active;api.setDocument(api.emptyDocument('German'));assert.equal(get('code-language').value,'de');api.switchTab(first);assert.equal(get('code-language').value,'en');
- get('demo').onclick();const text=Object.values(api.doc.nodes).map(n=>n.text).join('\n');assert.match(text,/\.type integer zaehler/);assert.match(text,/\.formula U\|zaehler = U\|zaehler \+ 1/);assert.doesNotMatch(text,/\.fo /);assert.equal(api.doc.profile.codeLanguage,'en');
- get('code-language').value='de';get('code-language').onchange();assert.equal(Object.values(api.doc.nodes).map(n=>n.text).join('\n'),text);
+test('code language selector is independent, tab-specific, and used for the fresh example', () => {
+  const { api, get } = session();
+  api.setDocument(api.emptyDocument('English'));
+  get('code-language').value = 'en';
+  get('code-language').onchange();
+  assert.equal(api.doc.profile.codeLanguage, 'en');
+  assert.notEqual(api.doc.view.language, 'en');
+  const first = api.active;
+  api.setDocument(api.emptyDocument('German'));
+  assert.equal(get('code-language').value, 'de');
+  api.switchTab(first);
+  assert.equal(get('code-language').value, 'en');
+  get('demo').onclick();
+  const text = Object.values(api.doc.nodes)
+    .map((n) => n.text)
+    .join('\n');
+  assert.match(text, /\.type integer zaehler/);
+  assert.match(text, /\.formula U\|zaehler = U\|zaehler \+ 1/);
+  assert.doesNotMatch(text, /\.fo /);
+  assert.equal(api.doc.profile.codeLanguage, 'en');
+  get('code-language').value = 'de';
+  get('code-language').onchange();
+  assert.equal(
+    Object.values(api.doc.nodes)
+      .map((n) => n.text)
+      .join('\n'),
+    text,
+  );
 });
