@@ -693,7 +693,7 @@ function download(name: string, bytes: Uint8Array | string, type: string) {
     a = document.createElement('a');
   a.href = url;
   // eslint-disable-next-line no-control-regex -- Steuerzeichen im Dateinamen werden bewusst ersetzt.
-  a.download = name.replace(/[<>:"/\\|?* \u0000-\u001f]/g, '_');
+  a.download = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
   document.body.append(a);
   a.click();
   a.remove();
@@ -1285,7 +1285,7 @@ function handleDiagramClick(e: MouseEvent) {
       editNode(id);
       return;
     }
-    pick(id, e.shiftKey);
+ pick(id, e.shiftKey);
     if (!e.shiftKey) lastDiagramClick = { id, time: e.timeStamp, x: e.clientX, y: e.clientY };
   } else if (!el.closest('[data-grip]')) clearSelection();
 }
