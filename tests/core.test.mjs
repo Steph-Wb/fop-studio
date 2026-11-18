@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as c from '../src/core.ts';
 const exportAt = (d) => c.exportFOP(d, new Date('2026-11-17T12:00:00Z'));
 test('encoding roundtrip and rejection', () => {
-  for (const enc of ['cp850', 'cp437', 'windows-125-2', 'utf-8'])
+  for (const enc of ['cp850', 'cp437', 'windows-1252', 'utf-8'])
     assert.equal(c.decode(c.encode('für ÄÖÜ äöü ß', enc), enc), 'für ÄÖÜ äöü ß');
   assert.throws(() => c.encode('😀', 'cp850'));
   assert.throws(() => c.encode('x', 'unconfirmed'));
