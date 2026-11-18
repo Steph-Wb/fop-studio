@@ -639,7 +639,7 @@ function renderPropertiesBase() {
       option('after', 'Nach diesem Element');
     }
     for (const s of slotNames[n.kind])
-      if (!['condition', 'header', 'operands'].includes(s)) option('inside:' + s, 'In ' + slotLabels[s] + ' einfügen');
+      if (!['header', 'condition', 'operands'].includes(s)) option('inside:' + s, 'In ' + slotLabels[s] + ' einfügen');
     destinations.value = n.slots.body
       ? 'inside:body'
       : n.kind === 'OnSelector'
@@ -693,7 +693,7 @@ function download(name: string, bytes: Uint8Array | string, type: string) {
     a = document.createElement('a');
   a.href = url;
   // eslint-disable-next-line no-control-regex -- Steuerzeichen im Dateinamen werden bewusst ersetzt.
-  a.download = name.replace(/[<>:\"/\\|?* -]/g, '_');
+  a.download = name.replace(/[<>:"/\\|?* \u0000-\u001f]/g, '_');
   document.body.append(a);
   a.click();
   a.remove();
