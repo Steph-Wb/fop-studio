@@ -1285,7 +1285,7 @@ function handleDiagramClick(e: MouseEvent) {
       editNode(id);
       return;
     }
- pick(id, e.shiftKey);
+    pick(id, e.shiftKey);
     if (!e.shiftKey) lastDiagramClick = { id, time: e.timeStamp, x: e.clientX, y: e.clientY };
   } else if (!el.closest('[data-grip]')) clearSelection();
 }
