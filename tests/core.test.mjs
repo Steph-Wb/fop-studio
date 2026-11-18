@@ -326,7 +326,7 @@ test('repeat tests at footer, while at header, folded repeat retains condition i
     assert.equal(c.diagramHeader(d, d.nodes[r], true), 'zaehler = 3');
     assert.equal(c.diagramFooter(d, d.nodes[r]), (language === 'de' ? 'Beenden, wenn: ' : 'Until: ') + 'zaehler = 3');
     assert.equal(c.diagramHeader(d, d.nodes[w], false), 'zaehler < 3');
-    assert.equal(c.diagramFooter(d, d.nodes[w]), '');
+   .assert.equal(c.diagramFooter(d, d.nodes[w]), '');
     const open = c.layout(d, null, new Set());
     assert.equal(open.byId.get(r).head, c.diagramTypography.headerSpace);
     assert.ok(open.byId.get(r).foot > 0);

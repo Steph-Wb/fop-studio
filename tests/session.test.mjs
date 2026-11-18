@@ -125,7 +125,7 @@ test('tabs preserve independent histories and source tabs', () => {
   source.metadata.sourceOnly = '.ein C';
   api.setDocument(source);
   const second = api.active;
-  api.setDocument(api.emptyDocument('C')));
+  api.setDocument(api.emptyDocument('C'));
   assert.ok(api.tabs.some((t) => t.id === second));
   api.switchTab(id);
   assert.equal(api.doc.nodes[n.id].text, 'changed');
