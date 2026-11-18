@@ -30,3 +30,11 @@ test('edits made while save is pending are not marked as saved',async()=>{const 
 test('saving invalid pending condition reports error and keeps editor open',async()=>{const {api,get}=session();const d=api.emptyDocument('Invalid'),n=api.addNode(d,'If'),c=api.addNode(d,'Text');c.text='mehr';n.slots.condition=[c.id];d.roots=[n.id];api.setDocument(d);api.editNode(n.id);get('inline-text').value='x AND';assert.equal(await api.saveActive(),false);assert.equal(get('inline-editor').hidden,false);assert.equal(d.nodes[c.id].text,'mehr');assert.equal(get('message-dialog').open,true);});
 test('conditional static jumps are clickable but computed labels are not guessed',()=>{const {api}=session();assert.equal(api.jumpName('.weiter AA00001 ? _(mehr)'),'AA00001');assert.equal(api.jumpName('.we "TARGET" ? x = 1'),'TARGET');assert.equal(api.jumpName(".weiter 'xprocst.xprocsp'"),null);assert.equal(api.jumpName('..weiter AA00001 ? mehr'),null);});
 
+
+test('code language selector is independent, tab-specific, and used for the fresh example',()=>{
+ const {api,get}=session();api.setDocument(api.emptyDocument('English'));
+ get('code-language').value='en';get('code-language').onchange();assert.equal(api.doc.profile.codeLanguage,'en');assert.notEqual(api.doc.view.language,'en');
+ const first=api.active;api.setDocument(api.emptyDocument('German'));assert.equal(get('code-language').value,'de');api.switchTab(first);assert.equal(get('code-language').value,'en');
+ get('demo').onclick();const text=Object.values(api.doc.nodes).map(n=>n.text).join('\n');assert.match(text,/\.type integer zaehler/);assert.match(text,/\.formula U\|zaehler = U\|zaehler \+ 1/);assert.doesNotMatch(text,/\.fo /);assert.equal(api.doc.profile.codeLanguage,'en');
+ get('code-language').value='de';get('code-language').onchange();assert.equal(Object.values(api.doc.nodes).map(n=>n.text).join('\n'),text);
+});

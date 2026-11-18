@@ -38,3 +38,15 @@ Fehler mit kleinen, frei teilbaren Beispielen beschreiben. Keine Kundendaten, Zu
 ## Lizenz
 
 MIT, siehe LICENSE. Unabhängiges Projekt; kein offizielles abas-Produkt.
+
+## Sprache des FOP-Codes
+
+Unter **Exportprofil → Sprache des generierten FOP-Codes** zwischen Deutsch und Englisch wählen. Die Einstellung wird im Projekt gespeichert und ist unabhängig von DE/EN für Strukturbegriffe. Bestehende Projekte ohne Spracheinstellung verwenden Deutsch.
+
+Der Generator verwendet vollständige, kleingeschriebene Befehle: .weiter / .continue, .formel / .formula, .art / .type und .ende / .end. Der Header lautet entsprechend ..!interpreter german translate oder ..!interpreter english translate. Die Option englvar wird nicht gesetzt: Befehlssprache und Sprache der abas-Systemvariablen sind getrennte Einstellungen.
+
+Nur Studio-generierte Befehle werden umgestellt. Eingetragene und importierte Texte, Bedingungen und Variablennamen bleiben unverändert; deren Sprache verantwortet der Anwender. Ein bereits eingefügtes Beispiel bleibt bei einem späteren Sprachwechsel ebenfalls unverändert. Neue Anweisungen und ein frisch geöffnetes Beispiel verwenden die gewählte Code-Sprache.
+
+Anwendervariablen werden mit U| angesprochen. Bei .art / .type steht der deklarierte Name gemäss abas-Syntax ohne U|; beispielsweise .art integer zaehler und danach .formel U|zaehler = 0.
+
+Grundlage: lokale abas-Onlinehilfe, Kapitel FO.INTERPRETER, FO.WEITER, FO.FORMEL, FO.ART und FO.ENDE (Stand 13.10.2023). Die proprietären Unterlagen sind nicht Bestandteil dieses Repositorys. Englisch generierte Programme vor produktiver Nutzung in abas testen.
