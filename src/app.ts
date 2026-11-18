@@ -1,176 +1,2121 @@
-import {procedureDiagnostics,parseCondition,conditionDisplay,editCondition,diagramHeader,diagramFooter,diagramTypography,wrappedText,fopExpression,replaceExpression,emptyDocument,addNode,importETF,importSPX,parseETF,decode,History,loadProject,projectJSON,exportFOP,validate,locations,descendants,childIds,label,layout,slotNames,kinds,expression,siblingRange,wrapNodes,type Document,type Node,type Location,type Encoding,type Kind} from './core.ts';
-const $=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
-const germanNames:Record<string,string>={Level:'Gruppe',Block:'Block',Frame:'Rahmen',Text:'Anweisung / Text',If:'Wenn / Sonst',While:'Solange',Repeat:'Wiederholen bis',OnSelector:'Fallauswahl',OnSelectorBranch:'Fallzweig',Procedure:'Prozedur',Call:'Aufruf',And:'UND',Or:'ODER',Not:'NICHT',Dummy:'Leer'};
-const names={...germanNames};
-const englishNames:Record<string,string>={Level:'Group',Block:'Block',Frame:'Frame',Text:'Statement / Text',If:'If / Else',While:'While',Repeat:'Repeat until',OnSelector:'Case',OnSelectorBranch:'Case branch',Procedure:'Procedure',Call:'Call',And:'AND',Or:'OR',Not:'NOT',Dummy:'Empty'};
-function term(de:string,en:string){return doc.view.language==='en'?en:de;}
-
-const slotLabels:Record<string,string>={body:'Inhalt',then:'Ja-Zweig',else:'Nein-Zweig',branches:'Fallzweige',header:'Titel / Anfang',condition:'Bedingung',footer:'Abschluss',operands:'Operanden'};
-let doc=emptyDocument(),history=new History(doc),selected:string|null=null,dirty=false,scale=1,collapsed=new Set<string>(),scene=layout(doc,null,collapsed),parentIndex=locations(doc),clip:{id:string;mode:'copy'|'move'}|null=null,pendingFile:{bytes:Uint8Array;name:string}|null=null;
-let fields:{id:string;input:HTMLTextAreaElement}[]=[],navEntries:{id:string;depth:number;text:string;kind:string}[]=[],navLimit=250,raf=0;
-const viewport=$('viewport'),svg=$('diagram') as unknown as SVGSVGElement;
-function message(title:string,text:string){$('message-title').textContent=title;$('message-content').textContent=text;$<HTMLDialogElement>('message-dialog').showModal();}
-function safe(fn:()=>void){try{fn();}catch(e){message('Aktion nicht möglich',e instanceof Error?e.message:String(e));}}
-function status(text:string){$('status').textContent=text;}
-function markDirty(){dirty=true;if(typeof tabs!=='undefined')renderTabs();document.title=(dirty?'• ':'')+doc.name+' – FOP Studio';$('docname').textContent=doc.name+(dirty?' • Ungespeichert':'');}
-function applyFields(){if(editorId){const text=$<HTMLTextAreaElement>('inline-text').value;const before=history.revision;if(editorExpression)editCondition(history,editorId,text);else history.text(editorId,text);if(history.revision!==before)markDirty();editorId=null;$('inline-editor').hidden=true;fields=[];}let changed=false;for(const f of fields)if(doc.nodes[f.id]?.text!==f.input.value){history.text(f.id,f.input.value);changed=true;}if(changed){markDirty();rebuild(false);}}
-function confirmReplace(){applyFields();return !dirty||confirm('Ungespeicherte Änderungen verwerfen?');}
-function activateDocument(next:Document,imported=false){lastDiagramClick=null;selection=[];anchor=null;target=null;buffer=null;editorId=null;$('inline-editor').hidden=true;closePop();doc=next;history=new History(doc);selected=null;clip=null;fields=[];dirty=imported;collapsed=new Set(doc.view.collapsed);$('search').setAttribute('value','');$<HTMLInputElement>('search').value='';navLimit=250;viewport.scrollTo(0,0);rebuild();document.title=doc.name+' – FOP Studio';}
-function rebuild(props=true){$('reading-mode').textContent=doc.view.readingMode?'✎ Bearbeitungsmodus':'Lesemodus';$('reading-mode').setAttribute('aria-pressed',String(!!doc.view.readingMode));$('edit-hint').hidden=!!doc.view.readingMode;Object.assign(names,doc.view.language==='en'?englishNames:germanNames);$<HTMLSelectElement>('structure-language').value=doc.view.language||'de';$<HTMLSelectElement>('case-layout').value=doc.view.caseLayout||'vertical';if(selected&&!doc.nodes[selected])selected=null;if(doc.view.focus&&!doc.nodes[doc.view.focus])doc.view.focus=null;parentIndex=locations(doc);scene=layout(doc,doc.view.focus,collapsed,viewport.clientWidth/scale);navEntries=[];const stack=doc.roots.slice().reverse().map(id=>({id,depth:0}));while(stack.length){const t=stack.pop()!,n=doc.nodes[t.id];if(!n)continue;navEntries.push({id:t.id,depth:t.depth,text:label(doc,n),kind:n.kind});const ids=childIds(n);for(let i=ids.length-1;i>=0;i--)stack.push({id:ids[i],depth:t.depth+1});}
- renderNav();if(props)renderProperties();renderSizing();$('nodecount').textContent=Object.keys(doc.nodes).length.toLocaleString('de-CH');$('docname').textContent=doc.name+(dirty?' • Ungespeichert':'');$<HTMLButtonElement>('undo').disabled=!history.undoStack.length;$<HTMLButtonElement>('redo').disabled=!history.redoStack.length;$<HTMLSelectElement>('output-encoding').value=doc.profile.encoding;$<HTMLSelectElement>('newline').value=doc.profile.newline;$<HTMLSelectElement>('code-language').value=doc.profile.codeLanguage||'de';$('welcome').classList.toggle('hidden',doc.roots.length>0);$('breadcrumb').textContent=doc.view.focus?label(doc,doc.nodes[doc.view.focus]).slice(0,100):'Gesamtes Programm';renderCanvas();if(typeof tabs!=='undefined'){renderTabs();renderSource();}}
-function renderNav(){const q=$<HTMLInputElement>('search').value.trim().toLocaleLowerCase();let hiddenDepth=Infinity;const list=navEntries.filter(x=>{if(doc.nodes[x.id].kind==='Dummy')return false;if(q)return x.text.toLocaleLowerCase().includes(q);if(x.depth>hiddenDepth)return false;hiddenDepth=Infinity;if(collapsed.has(x.id))hiddenDepth=x.depth;return isFoldable(doc.nodes[x.id]);});const box=$('outline');box.replaceChildren();for(const n of list.slice(0,navLimit)){const row=document.createElement('div');row.className='nav-row';row.style.paddingLeft=(Math.min(n.depth,8)*8)+'px';const fold=button(collapsed.has(n.id)?'▸':'▾',()=>toggleFold(n.id),'nav-fold');fold.title=collapsed.has(n.id)?'Aufklappen':'Zuklappen';fold.setAttribute('aria-expanded',String(!collapsed.has(n.id)));const b=document.createElement('button');b.className='nav-item'+(selected===n.id?' active':'');b.textContent=n.text.replace(/\n/g,' ')||names[n.kind];b.title=n.text;b.onclick=()=>safe(()=>{applyFields();selected=n.id;selection=[n.id];doc.view.focus=n.id;viewport.scrollTo(0,0);rebuild();});row.append(fold,b);box.append(row);}if(list.length>navLimit){box.append(button('Weitere anzeigen',()=>{navLimit+=250;renderNav();}));}if(!list.length){const p=document.createElement('p');p.className='help';p.textContent=q?'Keine passenden Elemente.':'Gruppen und Kontrollstrukturen erscheinen hier.';box.append(p);}}
-function renderSizing(){const surface=$('surface');surface.style.width=(scene.width*scale)+'px';surface.style.height=(scene.height*scale)+'px';}
-function element(tag:string,attrs:Record<string,string|number>,text?:string){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,String(v));if(text!==undefined)e.textContent=text;return e;}
-function renderCanvas(){const sw=viewport.clientWidth,sh=viewport.clientHeight,left=viewport.scrollLeft/scale,top=viewport.scrollTop/scale,w=sw/scale,h=sh/scale;svg.style.left=viewport.scrollLeft+'px';svg.style.top=viewport.scrollTop+'px';svg.setAttribute('width',String(sw));svg.setAttribute('height',String(sh));svg.setAttribute('viewBox',[left,top,w,h].join(' '));svg.replaceChildren();let rendered=0;const work=scene.roots.slice().reverse();while(work.length){const b=work.pop()!;if(b.x+b.w<left||b.y+b.h<top||b.x>left+w||b.y>top+h)continue;const n=doc.nodes[b.id];const g=element('g',{'data-id':b.id,class:'node'});const folded=collapsed.has(n.id)&&isFoldable(n);const fill=folded?'#e5e7e9':n.kind==='Text'?'#fffef9':n.kind==='Dummy'?'#f6f7f2':['If','OnSelector','OnSelectorBranch'].includes(n.kind)?'#eaf0e3':['While','Repeat'].includes(n.kind)?'#e3efeb':'#eef0e8';g.append(element('rect',{x:b.x,y:b.y,width:b.w,height:b.h,fill:folded?'#e5e7e9':'#fffef9',stroke:selected===b.id?'#18745b':'#a7b6a8','stroke-width':selected===b.id?2:1,class:'outline-stroke'}));if(b.y+b.head>=top&&b.y<top+h){g.append(element('rect',{x:b.x,y:b.y,width:b.w,height:b.head,fill,stroke:'#a7b6a8'}));const cap=(n.kind==='Repeat'&&!folded?term('Wiederholen','Repeat'):(names[n.kind]||n.kind))+(n.defaultBranch?' · '+term('SONST','ELSE'):'');const tx=b.x+(isFoldable(n)?40:16);if(!(doc.view.readingMode&&n.kind==='Text'))g.append(element('text',{x:tx,y:b.y+18,fill:'#52665d','font-size':11,'font-family':'Segoe UI,Arial'},n.kind==='Text'?term('Anweisung','Statement'):cap));let text=diagramHeader(doc,n,folded);const pieces=n.kind==='Repeat'&&!folded?[]:wrappedText(text,b.w,isFoldable(n));for(let i=0;i<pieces.length;i++){if(b.y+(doc.view.readingMode&&n.kind==='Text'?26:42)+i*diagramTypography.lineHeight<top-18||b.y+(doc.view.readingMode&&n.kind==='Text'?26:42)+i*diagramTypography.lineHeight>top+h+18)continue;const line=pieces[i].text;const ref=includeName(pieces[i].source),jump=jumpName(pieces[i].source);const textEl=element('text',{x:tx,y:b.y+(doc.view.readingMode&&n.kind==='Text'?26:42)+i*diagramTypography.lineHeight,fill:(ref||jump)?'#145e49':'#172c25','font-size':diagramTypography.fontSize,'font-weight':['Level','Block','Procedure','OnSelectorBranch'].includes(n.kind)?600:400,'font-family':n.kind==='Text'?'Consolas,monospace':'Segoe UI,Arial'},line);if(ref||jump){textEl.setAttribute(ref?'data-include':'data-jump',(ref||jump)!);textEl.setAttribute('style','pointer-events:auto;cursor:pointer;text-decoration:underline');}if(n.kind==='Call'){textEl.setAttribute('data-procedure',n.id);textEl.setAttribute('fill','#176b50');textEl.setAttribute('style','pointer-events:auto;cursor:pointer;text-decoration:underline');textEl.setAttribute('role','link');textEl.setAttribute('tabindex','0');textEl.setAttribute('aria-label','Prozedur '+text+' öffnen');textEl.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();safe(()=>goToProcedure(n.id));}});}g.append(textEl);}if(collapsed.has(n.id)&&isFoldable(n))g.append(element('text',{x:tx,y:b.y+b.head-9,fill:'#52665d','font-size':12},foldSummary(n)));g.append(element('title',{},text));}
- for(const l of b.lanes){const yes=l.title==='JA',color=yes?'#23744c':'#99551b',pale=yes?'#edf7ef':'#fff4e7';g.append(element('rect',{x:l.x,y:l.y,width:l.w,height:l.h,fill:pale,stroke:color,'stroke-width':1}));if(l.y>=top-36&&l.y<top+h){g.append(element('rect',{x:l.x+1,y:l.y+1,width:l.w-2,height:34,fill:yes?'#d4eddb':'#ffe2bf'}));g.append(element('text',{x:l.x+12,y:l.y+23,fill:color,'font-size':13,'font-weight':700},yes?term('✓ JA · DANN','✓ YES · THEN'):term('✕ NEIN · SONST','✕ NO · ELSE')));}}
- if(b.foot&&b.y+b.h>=top&&b.y+b.h-b.foot<top+h){g.append(element('rect',{x:b.x,y:b.y+b.h-b.foot,width:b.w,height:b.foot,fill:'#e3efeb',stroke:'#a7b6a8'}));for(const [i,part]of wrappedText(diagramFooter(doc,n),b.w).entries())g.append(element('text',{x:b.x+16,y:b.y+b.h-b.foot+24+i*diagramTypography.lineHeight,fill:'#172c25','font-size':diagramTypography.fontSize},part.text));}
- svg.append(g);rendered++;for(let i=b.children.length-1;i>=0;i--)work.push(b.children[i]);}svg.setAttribute('data-rendered',String(rendered));decorateCanvas();}
-function scheduleCanvas(){if(!raf)raf=requestAnimationFrame(()=>{raf=0;renderCanvas();});}
-viewport.addEventListener('click',e=>{if(e.target===viewport||e.target===$('surface'))safe(()=>clearSelection());});
-viewport.addEventListener('scroll',scheduleCanvas);new ResizeObserver(()=>{scene=layout(doc,doc.view.focus,collapsed,viewport.clientWidth/scale);renderSizing();scheduleCanvas();}).observe(viewport);
-
-
-function button(text:string,fn:()=>void,cls='small'){const b=document.createElement('button');b.textContent=text;b.className=cls;b.onclick=()=>safe(fn);return b;}
-function renderProperties(){fields=[];const details=$('details');details.replaceChildren();const n=selected?doc.nodes[selected]:null;$('props-title').textContent=n?label(doc,n).split('\n')[0].slice(0,100)||'(leer)':doc.name;$('typebadge').textContent=n?names[n.kind]:'Programm';
- if(!n){const title=document.createElement('input');title.value=doc.name;title.setAttribute('aria-label','Programmname');title.onchange=()=>{doc.name=title.value.trim()||'Programm';markDirty();};details.append(title);const p=document.createElement('p');p.className='hint';p.textContent='Element im Diagramm auswählen oder unten eine neue Anweisung einfügen.';details.append(p);}else{
- const note=document.createElement('p');note.className='hint';note.textContent=n.id+(n.sourceLine?' · ETF-Zeile '+n.sourceLine:' · Neues Element');details.append(note);
- let editable:string[]=[];if(n.kind==='Text')editable=[n.id];else for(const s of ['header','condition','footer','operands'])for(const id of n.slots[s]||[])editable.push(...descendants(doc,id));
- for(const id of editable.slice(0,120)){const t=doc.nodes[id];if(['And','Or','Not'].includes(t.kind)){const l=document.createElement('label');l.className='field-label';l.textContent='Verknüpfung '+names[t.kind];details.append(l);continue;}if(t.kind!=='Text')continue;const l=document.createElement('label');l.className='field-label';l.textContent=n.kind==='Text'?'Quelltext':n.slots.condition?'Bedingung / Operand':'Text / Titel';const input=document.createElement('textarea');input.value=t.text;input.spellcheck=false;input.setAttribute('aria-label',l.textContent);input.oninput=()=>{markDirty();};input.onchange=()=>safe(()=>{applyFields();});details.append(l,input);fields.push({id,input});}
- if(editable.length>120){const warn=document.createElement('p');warn.className='warning';warn.textContent='Nur die ersten 120 Ausdruckselemente werden hier angezeigt. Über die Suche kann jeder Text einzeln geöffnet werden.';details.append(warn);}
- if(n.kind==='OnSelectorBranch'){const l=document.createElement('label');l.className='field-label';const check=document.createElement('input');check.type='checkbox';check.style.width='auto';check.checked=!!n.defaultBranch;check.onchange=()=>safe(()=>{applyFields();history.commit([{id:n.id,before:structuredClone(n),after:{...structuredClone(n),defaultBranch:check.checked}}]);markDirty();rebuild();});l.append(check,document.createTextNode(' Standardzweig (Sonst)'));details.append(l);}
- const actions=document.createElement('div');actions.className='actions';actions.append(button('Übernehmen',()=>{applyFields();rebuild();}),button(collapsed.has(n.id)?'Aufklappen':'Einklappen',()=>{applyFields();if(collapsed.has(n.id))collapsed.delete(n.id);else collapsed.add(n.id);doc.view.collapsed=[...collapsed];rebuild();}),button('Fokus',()=>{applyFields();doc.view.focus=n.id;viewport.scrollTo(0,0);rebuild();}));details.append(actions);
- const edit=document.createElement('div');edit.className='actions';edit.append(button('Kopieren',()=>{applyFields();clip={id:n.id,mode:'copy'};renderProperties();}),button('Verschieben',()=>{applyFields();clip={id:n.id,mode:'move'};renderProperties();}),button('Löschen',()=>{applyFields();if(confirm('Element mit allen untergeordneten Inhalten löschen?')){history.remove(n.id);selected=null;markDirty();rebuild();}},'small danger'));details.append(edit);
- if(n.slots.condition){const logic=document.createElement('div');logic.className='actions';for(const kind of ['And','Or','Not'] as const)logic.append(button(names[kind]+' ergänzen',()=>wrapExpression(n.id,kind)));details.append(logic);}
- if(n.kind==='OnSelector'){const chooser=document.createElement('select');chooser.setAttribute('aria-label','Fallzweig fokussieren');const def=document.createElement('option');def.textContent='Fallzweig einzeln öffnen …';def.value='';chooser.append(def);for(const id of n.slots.branches){const b=doc.nodes[id],o=document.createElement('option');o.value=id;o.textContent=b.defaultBranch?'Sonst':label(doc,b);chooser.append(o);}chooser.onchange=()=>{if(chooser.value){applyFields();selected=chooser.value;doc.view.focus=selected;viewport.scrollTo(0,0);rebuild();}};details.append(chooser);}
- }
- const destinations=$<HTMLSelectElement>('destination');destinations.replaceChildren();const option=(value:string,text:string)=>{const o=document.createElement('option');o.value=value;o.textContent=text;destinations.append(o);};option('end','Am Ende des Programms');if(n){const loc=parentIndex.get(n.id);if(loc&&!['condition','header','operands'].includes(loc.slot)){option('before','Vor diesem Element');option('after','Nach diesem Element');}for(const s of slotNames[n.kind])if(!['header','condition','operands'].includes(s))option('inside:'+s,'In '+slotLabels[s]+' einfügen');destinations.value=n.slots.body?'inside:body':n.kind==='OnSelector'?'inside:branches':loc&&!['condition','header','operands'].includes(loc.slot)?'after':'end';}
- $<HTMLButtonElement>('paste').disabled=!clip||!doc.nodes[clip.id];$('clipboard').textContent=clip&&doc.nodes[clip.id]?(clip.mode==='copy'?'Kopiert: ':'Verschieben: ')+label(doc,doc.nodes[clip.id]).slice(0,70):'';
+import {
+  procedureDiagnostics,
+  parseCondition,
+  conditionDisplay,
+  editCondition,
+  diagramHeader,
+  diagramFooter,
+  diagramTypography,
+  wrappedText,
+  fopExpression,
+  emptyDocument,
+  addNode,
+  importETF,
+  importSPX,
+  parseETF,
+  decode,
+  History,
+  loadProject,
+  projectJSON,
+  exportFOP,
+  validate,
+  locations,
+  descendants,
+  childIds,
+  label,
+  layout,
+  slotNames,
+  expression,
+  siblingRange,
+  wrapNodes,
+  type Document,
+  type Node,
+  type Location,
+  type Encoding,
+  type Kind,
+} from './core.ts';
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const germanNames: Record<string, string> = {
+  Level: 'Gruppe',
+  Block: 'Block',
+  Frame: 'Rahmen',
+  Text: 'Anweisung / Text',
+  If: 'Wenn / Sonst',
+  While: 'Solange',
+  Repeat: 'Wiederholen bis',
+  OnSelector: 'Fallauswahl',
+  OnSelectorBranch: 'Fallzweig',
+  Procedure: 'Prozedur',
+  Call: 'Aufruf',
+  And: 'UND',
+  Or: 'ODER',
+  Not: 'NICHT',
+  Dummy: 'Leer',
+};
+const names = { ...germanNames };
+const englishNames: Record<string, string> = {
+  Level: 'Group',
+  Block: 'Block',
+  Frame: 'Frame',
+  Text: 'Statement / Text',
+  If: 'If / Else',
+  While: 'While',
+  Repeat: 'Repeat until',
+  OnSelector: 'Case',
+  OnSelectorBranch: 'Case branch',
+  Procedure: 'Procedure',
+  Call: 'Call',
+  And: 'AND',
+  Or: 'OR',
+  Not: 'NOT',
+  Dummy: 'Empty',
+};
+function term(de: string, en: string) {
+  return doc.view.language === 'en' ? en : de;
 }
-function wrapExpression(id:string,kind:'And'|'Or'|'Not'){applyFields();const n=doc.nodes[id],before=structuredClone(n),after=structuredClone(n),tmp=emptyDocument();tmp.nextId=doc.nextId;const op=addNode(tmp,kind);op.slots.operands=n.slots.condition.slice();if(kind!=='Not'){const text=addNode(tmp,'Text');text.text='Weitere Bedingung';op.slots.operands.push(text.id);}after.slots.condition=[op.id];doc.nextId=tmp.nextId;history.commit([{id,before,after},...Object.values(tmp.nodes).map(n=>({id:n.id,before:null,after:n}))]);markDirty();rebuild();}
-function destination():Location{const value=$<HTMLSelectElement>('destination').value;if(!selected||value==='end')return {parent:null,slot:'roots',index:doc.roots.length};if(value.startsWith('inside:')){const slot=value.slice(7);return {parent:selected,slot,index:doc.nodes[selected].slots[slot].length};}const loc=parentIndex.get(selected)!;return {...loc,index:loc.index+(value==='after'?1:0)};}
-function download(name:string,bytes:Uint8Array|string,type:string){const blob=new Blob([bytes as BlobPart],{type});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_');document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
-$('preview').onclick=()=>safe(()=>{applyFields();const result=exportFOP(doc);message('FOP-Vorschau · '+result.bytes.length.toLocaleString('de-CH')+' Bytes',result.text);});
-$('export').onclick=()=>{void exportToFile();};
-$('undo').onclick=()=>safe(()=>{applyFields();history.undo();markDirty();rebuild();});$('redo').onclick=()=>safe(()=>{applyFields();history.redo();markDirty();rebuild();});
-$('insert').onclick=()=>safe(()=>{applyFields();selected=history.insert($<HTMLSelectElement>('insert-kind').value as Kind,destination());markDirty();rebuild();reveal(selected);});
-$('paste').onclick=()=>safe(()=>{applyFields();if(!clip)return;const at=destination();if(clip.mode==='copy')selected=history.copy(clip.id,at);else{history.move(clip.id,at);selected=clip.id;clip=null;}markDirty();rebuild();reveal(selected!);});
-function reveal(id:string){let b=scene.byId.get(id);if(!b){doc.view.focus=id;rebuild();b=scene.byId.get(id);}if(b)viewport.scrollTo(Math.max(0,b.x*scale-20),Math.max(0,b.y*scale-20));}
-$('home').onclick=()=>safe(()=>{applyFields();doc.view.focus=null;viewport.scrollTo(0,0);rebuild();});$('collapse-all').onclick=()=>{applyFields();for(const n of Object.values(doc.nodes))if(isFoldable(n))collapsed.add(n.id);doc.view.collapsed=[...collapsed];rebuild();};
-$('expand-all').onclick=()=>{applyFields();collapsed.clear();doc.view.collapsed=[];rebuild();};
-$('focus-up').onclick=()=>{applyFields();const id=doc.view.focus;doc.view.focus=id?(parentIndex.get(id)?.parent||null):null;viewport.scrollTo(0,0);rebuild();};
-$('case-layout').onchange=()=>safe(()=>{applyFields();doc.view.caseLayout=$<HTMLSelectElement>('case-layout').value==='horizontal'?'horizontal':'vertical';markDirty();rebuild();if(selected)reveal(selected);else viewport.scrollTo(0,0);});
-$('zoom').onchange=()=>{scale=Number($<HTMLSelectElement>('zoom').value);rebuild(false);};
-$('search').oninput=()=>{navLimit=250;renderNav();};$('output-encoding').onchange=()=>{doc.profile.encoding=$<HTMLSelectElement>('output-encoding').value as Encoding;markDirty();};$('code-language').onchange=()=>{doc.profile.codeLanguage=$<HTMLSelectElement>('code-language').value as 'de'|'en';markDirty();};$('newline').onchange=()=>{doc.profile.newline=$<HTMLSelectElement>('newline').value as 'LF'|'CRLF';markDirty();};
-function showDiagnostics(){const errors=[...doc.diagnostics,...validate(doc),...procedureDiagnostics(doc)];message('Import- und Strukturprüfung',errors.length?errors.map(e=>(e.line?'Quellzeile '+e.line+': ':'')+e.message).join('\n'):'Keine Import-, Struktur- oder Prozedurkonflikte gefunden.\nProzedurverwaltung: eigene Variablen, getrennt je Aufrufebene.\nAbas-Ausführungstest der neuen Verwaltung steht aus.');}
-$('diagnostics').onclick=()=>safe(()=>{applyFields();showDiagnostics();});$('message-close').onclick=()=>$<HTMLDialogElement>('message-dialog').close();
-$('demo').onclick=()=>safe(()=>{if(!confirmReplace())return;const sample='EasyCASE=SPX V6.8\nLevel=1:1\nText:1\nLine=Beispiel\nEndText;\nLevelBody;\nText:2\nLine=.art integer zaehler\nLine=.formel U|zaehler = 0\nEndText;\nRepeat:3\nText:4\nLine=.formel U|zaehler = U|zaehler + 1\nEndText;\nIf:5\nText:6\nLine=U|zaehler = 2\nEndText;\nThen;\nText:7\nLine=.. Zweiter Durchlauf\nEndText;\nElse;\nDummy;\nEndIf;\nUntil;\nText:8\nLine=U|zaehler = 3\nEndText;\nEndRepeat;\nEndLevel;';const language=doc.profile.codeLanguage||'de';const example=parseETF(language==='en'?sample.replace(/Line=\.art /g,'Line=.type ').replace(/Line=\.formel /g,'Line=.formula '):sample,'Beispiel');example.profile.codeLanguage=language;setDocument(example,true);});
-window.addEventListener('beforeunload',e=>{if(dirty||tabs.some(t=>t.dirty)){e.preventDefault();e.returnValue='';}});
-window.addEventListener('keydown',e=>{if(e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLInputElement)return;if(e.ctrlKey&&e.key.toLowerCase()==='z'){e.preventDefault();$('undo').click();}if(e.ctrlKey&&e.key.toLowerCase()==='y'){e.preventDefault();$('redo').click();}if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();$('save').click();}});
 
-let selection:string[]=[],anchor:string|null=null,target:Location|null=null,editorId:string|null=null,editorExpression=false;
-let buffer:{ids:string[];nodes:Node[];cut:boolean}|null=null;
-const spots=new Map<string,Location>();
-function validSelection(){selection=selection.filter(id=>doc.nodes[id]);if(selected&&!selection.includes(selected))selection=[selected];return selection;}
-function clearSelection(){applyFields();selection=[];selected=null;anchor=null;target=null;closePop();renderProperties();renderNav();renderCanvas();status('Auswahl aufgehoben.');}
-function pick(id:string,shift=false){applyFields();selection=shift&&anchor?siblingRange(doc,anchor,id):[id];if(!shift)anchor=id;selected=id;target=null;renderProperties();renderNav();renderCanvas();}
-function quickbar(){const hasArea=validSelection().some(id=>isFoldable(doc.nodes[id]))||!!(doc.view.focus&&isFoldable(doc.nodes[doc.view.focus]));$<HTMLButtonElement>('expand-below').disabled=!hasArea;$<HTMLButtonElement>('collapse-below').disabled=!hasArea;const bar=$('quickbar');bar.replaceChildren();const ids=validSelection();bar.hidden=!!doc.view.readingMode||!ids.length;if(doc.view.readingMode||!ids.length)return;bar.append(button(ids.length>1?ids.length+' Blöcke':'Bearbeiten',()=>editNode(ids[0])));bar.append(button('Auswahl aufheben',clearSelection));bar.append(button('Kopieren',()=>copySelection(false)),button('Ausschneiden',()=>copySelection(true)),button('Duplizieren',duplicate));for(const kind of ['If','While','Repeat'] as const)bar.append(button('In '+names[kind],()=>{selected=wrapNodes(history,ids,kind);selection=[selected];markDirty();rebuild();reveal(selected);editNode(selected);}));bar.append(button('▸ / ▾',()=>{for(const id of ids){if(collapsed.has(id))collapsed.delete(id);else collapsed.add(id);}rebuild();}),button('Löschen',deleteSelection));}
-function closePop(){ $('insert-popover').hidden=true;}
-function isFoldable(n:Node){return !!(n.slots.body||n.slots.then||n.slots.branches);}
-function foldSummary(n:Node){if(doc.view.language==='en'){if(n.kind==='If')return 'Then: '+n.slots.then.length+' · Else: '+n.slots.else.length+' blocks · collapsed';if(n.slots.branches)return n.slots.branches.length+' branches · collapsed';return (n.slots.body?.length||0)+' direct blocks · collapsed';}if(n.kind==='If')return 'Dann: '+n.slots.then.length+' · Sonst: '+n.slots.else.length+' Blöcke · eingeklappt';if(n.slots.branches)return n.slots.branches.length+' Fallzweige · eingeklappt';return (n.slots.body?.length||0)+' direkte Blöcke · eingeklappt';}
+const slotLabels: Record<string, string> = {
+  body: 'Inhalt',
+  then: 'Ja-Zweig',
+  else: 'Nein-Zweig',
+  branches: 'Fallzweige',
+  header: 'Titel / Anfang',
+  condition: 'Bedingung',
+  footer: 'Abschluss',
+  operands: 'Operanden',
+};
+let doc = emptyDocument(),
+  history = new History(doc),
+  selected: string | null = null,
+  dirty = false,
+  scale = 1,
+  collapsed = new Set<string>(),
+  scene = layout(doc, null, collapsed),
+  parentIndex = locations(doc),
+  clip: { id: string; mode: 'copy' | 'move' } | null = null,
+  pendingFile: { bytes: Uint8Array; name: string } | null = null;
+let fields: { id: string; input: HTMLTextAreaElement }[] = [],
+  navEntries: { id: string; depth: number; text: string; kind: string }[] = [],
+  navLimit = 250,
+  raf = 0;
+const viewport = $('viewport'),
+  svg = $('diagram') as unknown as SVGSVGElement;
+function message(title: string, text: string) {
+  $('message-title').textContent = title;
+  $('message-content').textContent = text;
+  $<HTMLDialogElement>('message-dialog').showModal();
+}
+function safe(fn: () => void) {
+  try {
+    fn();
+  } catch (e) {
+    message('Aktion nicht möglich', e instanceof Error ? e.message : String(e));
+  }
+}
+function status(text: string) {
+  $('status').textContent = text;
+}
+function markDirty() {
+  dirty = true;
+  if (typeof tabs !== 'undefined') renderTabs();
+  document.title = (dirty ? '• ' : '') + doc.name + ' – FOP Studio';
+  $('docname').textContent = doc.name + (dirty ? ' • Ungespeichert' : '');
+}
+function applyFields() {
+  if (editorId) {
+    const text = $<HTMLTextAreaElement>('inline-text').value;
+    const before = history.revision;
+    if (editorExpression) editCondition(history, editorId, text);
+    else history.text(editorId, text);
+    if (history.revision !== before) markDirty();
+    editorId = null;
+    $('inline-editor').hidden = true;
+    fields = [];
+  }
+  let changed = false;
+  for (const f of fields)
+    if (doc.nodes[f.id]?.text !== f.input.value) {
+      history.text(f.id, f.input.value);
+      changed = true;
+    }
+  if (changed) {
+    markDirty();
+    rebuild(false);
+  }
+}
+function confirmReplace() {
+  applyFields();
+  return !dirty || confirm('Ungespeicherte Änderungen verwerfen?');
+}
+function activateDocument(next: Document, imported = false) {
+  lastDiagramClick = null;
+  selection = [];
+  anchor = null;
+  target = null;
+  buffer = null;
+  editorId = null;
+  $('inline-editor').hidden = true;
+  closePop();
+  doc = next;
+  history = new History(doc);
+  selected = null;
+  clip = null;
+  fields = [];
+  dirty = imported;
+  collapsed = new Set(doc.view.collapsed);
+  $('search').setAttribute('value', '');
+  $<HTMLInputElement>('search').value = '';
+  navLimit = 250;
+  viewport.scrollTo(0, 0);
+  rebuild();
+  document.title = doc.name + ' – FOP Studio';
+}
+function rebuild(props = true) {
+  $('reading-mode').textContent = doc.view.readingMode ? '✎ Bearbeitungsmodus' : 'Lesemodus';
+  $('reading-mode').setAttribute('aria-pressed', String(!!doc.view.readingMode));
+  $('edit-hint').hidden = !!doc.view.readingMode;
+  Object.assign(names, doc.view.language === 'en' ? englishNames : germanNames);
+  $<HTMLSelectElement>('structure-language').value = doc.view.language || 'de';
+  $<HTMLSelectElement>('case-layout').value = doc.view.caseLayout || 'vertical';
+  if (selected && !doc.nodes[selected]) selected = null;
+  if (doc.view.focus && !doc.nodes[doc.view.focus]) doc.view.focus = null;
+  parentIndex = locations(doc);
+  scene = layout(doc, doc.view.focus, collapsed, viewport.clientWidth / scale);
+  navEntries = [];
+  const stack = doc.roots
+    .slice()
+    .reverse()
+    .map((id) => ({ id, depth: 0 }));
+  while (stack.length) {
+    const t = stack.pop()!,
+      n = doc.nodes[t.id];
+    if (!n) continue;
+    navEntries.push({ id: t.id, depth: t.depth, text: label(doc, n), kind: n.kind });
+    const ids = childIds(n);
+    for (let i = ids.length - 1; i >= 0; i--) stack.push({ id: ids[i], depth: t.depth + 1 });
+  }
+  renderNav();
+  if (props) renderProperties();
+  renderSizing();
+  $('nodecount').textContent = Object.keys(doc.nodes).length.toLocaleString('de-CH');
+  $('docname').textContent = doc.name + (dirty ? ' • Ungespeichert' : '');
+  $<HTMLButtonElement>('undo').disabled = !history.undoStack.length;
+  $<HTMLButtonElement>('redo').disabled = !history.redoStack.length;
+  $<HTMLSelectElement>('output-encoding').value = doc.profile.encoding;
+  $<HTMLSelectElement>('newline').value = doc.profile.newline;
+  $<HTMLSelectElement>('code-language').value = doc.profile.codeLanguage || 'de';
+  $('welcome').classList.toggle('hidden', doc.roots.length > 0);
+  $('breadcrumb').textContent = doc.view.focus
+    ? label(doc, doc.nodes[doc.view.focus]).slice(0, 100)
+    : 'Gesamtes Programm';
+  renderCanvas();
+  if (typeof tabs !== 'undefined') {
+    renderTabs();
+    renderSource();
+  }
+}
+function renderNav() {
+  const q = $<HTMLInputElement>('search').value.trim().toLocaleLowerCase();
+  let hiddenDepth = Infinity;
+  const list = navEntries.filter((x) => {
+    if (doc.nodes[x.id].kind === 'Dummy') return false;
+    if (q) return x.text.toLocaleLowerCase().includes(q);
+    if (x.depth > hiddenDepth) return false;
+    hiddenDepth = Infinity;
+    if (collapsed.has(x.id)) hiddenDepth = x.depth;
+    return isFoldable(doc.nodes[x.id]);
+  });
+  const box = $('outline');
+  box.replaceChildren();
+  for (const n of list.slice(0, navLimit)) {
+    const row = document.createElement('div');
+    row.className = 'nav-row';
+    row.style.paddingLeft = Math.min(n.depth, 8) * 8 + 'px';
+    const fold = button(collapsed.has(n.id) ? '▸' : '▾', () => toggleFold(n.id), 'nav-fold');
+    fold.title = collapsed.has(n.id) ? 'Aufklappen' : 'Zuklappen';
+    fold.setAttribute('aria-expanded', String(!collapsed.has(n.id)));
+    const b = document.createElement('button');
+    b.className = 'nav-item' + (selected === n.id ? ' active' : '');
+    b.textContent = n.text.replace(/\n/g, ' ') || names[n.kind];
+    b.title = n.text;
+    b.onclick = () =>
+      safe(() => {
+        applyFields();
+        selected = n.id;
+        selection = [n.id];
+        doc.view.focus = n.id;
+        viewport.scrollTo(0, 0);
+        rebuild();
+      });
+    row.append(fold, b);
+    box.append(row);
+  }
+  if (list.length > navLimit) {
+    box.append(
+      button('Weitere anzeigen', () => {
+        navLimit += 250;
+        renderNav();
+      }),
+    );
+  }
+  if (!list.length) {
+    const p = document.createElement('p');
+    p.className = 'help';
+    p.textContent = q ? 'Keine passenden Elemente.' : 'Gruppen und Kontrollstrukturen erscheinen hier.';
+    box.append(p);
+  }
+}
+function renderSizing() {
+  const surface = $('surface');
+  surface.style.width = scene.width * scale + 'px';
+  surface.style.height = scene.height * scale + 'px';
+}
+function element(tag: string, attrs: Record<string, string | number>, text?: string) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function renderCanvas() {
+  const sw = viewport.clientWidth,
+    sh = viewport.clientHeight,
+    left = viewport.scrollLeft / scale,
+    top = viewport.scrollTop / scale,
+    w = sw / scale,
+    h = sh / scale;
+  svg.style.left = viewport.scrollLeft + 'px';
+  svg.style.top = viewport.scrollTop + 'px';
+  svg.setAttribute('width', String(sw));
+  svg.setAttribute('height', String(sh));
+  svg.setAttribute('viewBox', [left, top, w, h].join(' '));
+  svg.replaceChildren();
+  let rendered = 0;
+  const work = scene.roots.slice().reverse();
+  while (work.length) {
+    const b = work.pop()!;
+    if (b.x + b.w < left || b.y + b.h < top || b.x > left + w || b.y > top + h) continue;
+    const n = doc.nodes[b.id];
+    const g = element('g', { 'data-id': b.id, class: 'node' });
+    const folded = collapsed.has(n.id) && isFoldable(n);
+    const fill = folded
+      ? '#e5e7e9'
+      : n.kind === 'Text'
+        ? '#fffef9'
+        : n.kind === 'Dummy'
+          ? '#f6f7f2'
+          : ['If', 'OnSelector', 'OnSelectorBranch'].includes(n.kind)
+            ? '#eaf0e3'
+            : ['While', 'Repeat'].includes(n.kind)
+              ? '#e3efeb'
+              : '#eef0e8';
+    g.append(
+      element('rect', {
+        x: b.x,
+        y: b.y,
+        width: b.w,
+        height: b.h,
+        fill: folded ? '#e5e7e9' : '#fffef9',
+        stroke: selected === b.id ? '#18745b' : '#a7b6a8',
+        'stroke-width': selected === b.id ? 2 : 1,
+        class: 'outline-stroke',
+      }),
+    );
+    if (b.y + b.head >= top && b.y < top + h) {
+      g.append(element('rect', { x: b.x, y: b.y, width: b.w, height: b.head, fill, stroke: '#a7b6a8' }));
+      const cap =
+        (n.kind === 'Repeat' && !folded ? term('Wiederholen', 'Repeat') : names[n.kind] || n.kind) +
+        (n.defaultBranch ? ' · ' + term('SONST', 'ELSE') : '');
+      const tx = b.x + (isFoldable(n) ? 40 : 16);
+      if (!(doc.view.readingMode && n.kind === 'Text'))
+        g.append(
+          element(
+            'text',
+            { x: tx, y: b.y + 18, fill: '#52665d', 'font-size': 11, 'font-family': 'Segoe UI,Arial' },
+            n.kind === 'Text' ? term('Anweisung', 'Statement') : cap,
+          ),
+        );
+      const text = diagramHeader(doc, n, folded);
+      const pieces = n.kind === 'Repeat' && !folded ? [] : wrappedText(text, b.w, isFoldable(n));
+      for (let i = 0; i < pieces.length; i++) {
+        if (
+          b.y + (doc.view.readingMode && n.kind === 'Text' ? 26 : 42) + i * diagramTypography.lineHeight < top - 18 ||
+          b.y + (doc.view.readingMode && n.kind === 'Text' ? 26 : 42) + i * diagramTypography.lineHeight > top + h + 18
+        )
+          continue;
+        const line = pieces[i].text;
+        const ref = includeName(pieces[i].source),
+          jump = jumpName(pieces[i].source);
+        const textEl = element(
+          'text',
+          {
+            x: tx,
+            y: b.y + (doc.view.readingMode && n.kind === 'Text' ? 26 : 42) + i * diagramTypography.lineHeight,
+            fill: ref || jump ? '#145e49' : '#172c25',
+            'font-size': diagramTypography.fontSize,
+            'font-weight': ['Level', 'Block', 'Procedure', 'OnSelectorBranch'].includes(n.kind) ? 600 : 400,
+            'font-family': n.kind === 'Text' ? 'Consolas,monospace' : 'Segoe UI,Arial',
+          },
+          line,
+        );
+        if (ref || jump) {
+          textEl.setAttribute(ref ? 'data-include' : 'data-jump', (ref || jump)!);
+          textEl.setAttribute('style', 'pointer-events:auto;cursor:pointer;text-decoration:underline');
+        }
+        if (n.kind === 'Call') {
+          textEl.setAttribute('data-procedure', n.id);
+          textEl.setAttribute('fill', '#176b50');
+          textEl.setAttribute('style', 'pointer-events:auto;cursor:pointer;text-decoration:underline');
+          textEl.setAttribute('role', 'link');
+          textEl.setAttribute('tabindex', '0');
+          textEl.setAttribute('aria-label', 'Prozedur ' + text + ' öffnen');
+          textEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              safe(() => goToProcedure(n.id));
+            }
+          });
+        }
+        g.append(textEl);
+      }
+      if (collapsed.has(n.id) && isFoldable(n))
+        g.append(element('text', { x: tx, y: b.y + b.head - 9, fill: '#52665d', 'font-size': 12 }, foldSummary(n)));
+      g.append(element('title', {}, text));
+    }
+    for (const l of b.lanes) {
+      const yes = l.title === 'JA',
+        color = yes ? '#23744c' : '#99551b',
+        pale = yes ? '#edf7ef' : '#fff4e7';
+      g.append(
+        element('rect', { x: l.x, y: l.y, width: l.w, height: l.h, fill: pale, stroke: color, 'stroke-width': 1 }),
+      );
+      if (l.y >= top - 36 && l.y < top + h) {
+        g.append(
+          element('rect', { x: l.x + 1, y: l.y + 1, width: l.w - 2, height: 34, fill: yes ? '#d4eddb' : '#ffe2bf' }),
+        );
+        g.append(
+          element(
+            'text',
+            { x: l.x + 12, y: l.y + 23, fill: color, 'font-size': 13, 'font-weight': 700 },
+            yes ? term('✓ JA · DANN', '✓ YES · THEN') : term('✕ NEIN · SONST', '✕ NO · ELSE'),
+          ),
+        );
+      }
+    }
+    if (b.foot && b.y + b.h >= top && b.y + b.h - b.foot < top + h) {
+      g.append(
+        element('rect', {
+          x: b.x,
+          y: b.y + b.h - b.foot,
+          width: b.w,
+          height: b.foot,
+          fill: '#e3efeb',
+          stroke: '#a7b6a8',
+        }),
+      );
+      for (const [i, part] of wrappedText(diagramFooter(doc, n), b.w).entries())
+        g.append(
+          element(
+            'text',
+            {
+              x: b.x + 16,
+              y: b.y + b.h - b.foot + 24 + i * diagramTypography.lineHeight,
+              fill: '#172c25',
+              'font-size': diagramTypography.fontSize,
+            },
+            part.text,
+          ),
+        );
+    }
+    svg.append(g);
+    rendered++;
+    for (let i = b.children.length - 1; i >= 0; i--) work.push(b.children[i]);
+  }
+  svg.setAttribute('data-rendered', String(rendered));
+  decorateCanvas();
+}
+function scheduleCanvas() {
+  if (!raf)
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      renderCanvas();
+    });
+}
+viewport.addEventListener('click', (e) => {
+  if (e.target === viewport || e.target === $('surface')) safe(() => clearSelection());
+});
+viewport.addEventListener('scroll', scheduleCanvas);
+new ResizeObserver(() => {
+  scene = layout(doc, doc.view.focus, collapsed, viewport.clientWidth / scale);
+  renderSizing();
+  scheduleCanvas();
+}).observe(viewport);
 
-function foldBelow(fold:boolean){applyFields();const ids=validSelection().filter(id=>isFoldable(doc.nodes[id]));if(!ids.length&&doc.view.focus&&isFoldable(doc.nodes[doc.view.focus]))ids.push(doc.view.focus);if(!ids.length)return;const first=scene.byId.get(ids[0]);const offset=first?first.y*scale-viewport.scrollTop:0;const roots=new Set(ids);const seen=new Set<string>();for(const id of ids)for(const child of descendants(doc,id))seen.add(child);for(const id of seen)if(isFoldable(doc.nodes[id])){if(fold&&!roots.has(id))collapsed.add(id);else collapsed.delete(id);}doc.view.collapsed=[...collapsed];rebuild();const after=scene.byId.get(ids[0]);if(after)viewport.scrollTop=Math.max(0,after.y*scale-offset);scheduleCanvas();status(fold?'Untergeordnete Strukturen zugeklappt; der ausgewählte Bereich bleibt offen.':'Alle untergeordneten Strukturen aufgeklappt.');}
-$('expand-below').onclick=()=>safe(()=>foldBelow(false));
-$('collapse-below').onclick=()=>safe(()=>foldBelow(true));
+function button(text: string, fn: () => void, cls = 'small') {
+  const b = document.createElement('button');
+  b.textContent = text;
+  b.className = cls;
+  b.onclick = () => safe(fn);
+  return b;
+}
+function renderPropertiesBase() {
+  fields = [];
+  const details = $('details');
+  details.replaceChildren();
+  const n = selected ? doc.nodes[selected] : null;
+  $('props-title').textContent = n ? label(doc, n).split('\n')[0].slice(0, 100) || '(leer)' : doc.name;
+  $('typebadge').textContent = n ? names[n.kind] : 'Programm';
+  if (!n) {
+    const title = document.createElement('input');
+    title.value = doc.name;
+    title.setAttribute('aria-label', 'Programmname');
+    title.onchange = () => {
+      doc.name = title.value.trim() || 'Programm';
+      markDirty();
+    };
+    details.append(title);
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'Element im Diagramm auswählen oder unten eine neue Anweisung einfügen.';
+    details.append(p);
+  } else {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = n.id + (n.sourceLine ? ' · ETF-Zeile ' + n.sourceLine : ' · Neues Element');
+    details.append(note);
+    let editable: string[] = [];
+    if (n.kind === 'Text') editable = [n.id];
+    else
+      for (const s of ['header', 'condition', 'footer', 'operands'])
+        for (const id of n.slots[s] || []) editable.push(...descendants(doc, id));
+    for (const id of editable.slice(0, 120)) {
+      const t = doc.nodes[id];
+      if (['And', 'Or', 'Not'].includes(t.kind)) {
+        const l = document.createElement('label');
+        l.className = 'field-label';
+        l.textContent = 'Verknüpfung ' + names[t.kind];
+        details.append(l);
+        continue;
+      }
+      if (t.kind !== 'Text') continue;
+      const l = document.createElement('label');
+      l.className = 'field-label';
+      l.textContent = n.kind === 'Text' ? 'Quelltext' : n.slots.condition ? 'Bedingung / Operand' : 'Text / Titel';
+      const input = document.createElement('textarea');
+      input.value = t.text;
+      input.spellcheck = false;
+      input.setAttribute('aria-label', l.textContent);
+      input.oninput = () => {
+        markDirty();
+      };
+      input.onchange = () =>
+        safe(() => {
+          applyFields();
+        });
+      details.append(l, input);
+      fields.push({ id, input });
+    }
+    if (editable.length > 120) {
+      const warn = document.createElement('p');
+      warn.className = 'warning';
+      warn.textContent =
+        'Nur die ersten 120 Ausdruckselemente werden hier angezeigt. Über die Suche kann jeder Text einzeln geöffnet werden.';
+      details.append(warn);
+    }
+    if (n.kind === 'OnSelectorBranch') {
+      const l = document.createElement('label');
+      l.className = 'field-label';
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.style.width = 'auto';
+      check.checked = !!n.defaultBranch;
+      check.onchange = () =>
+        safe(() => {
+          applyFields();
+          history.commit([
+            { id: n.id, before: structuredClone(n), after: { ...structuredClone(n), defaultBranch: check.checked } },
+          ]);
+          markDirty();
+          rebuild();
+        });
+      l.append(check, document.createTextNode(' Standardzweig (Sonst)'));
+      details.append(l);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.append(
+      button('Übernehmen', () => {
+        applyFields();
+        rebuild();
+      }),
+      button(collapsed.has(n.id) ? 'Aufklappen' : 'Einklappen', () => {
+        applyFields();
+        if (collapsed.has(n.id)) collapsed.delete(n.id);
+        else collapsed.add(n.id);
+        doc.view.collapsed = [...collapsed];
+        rebuild();
+      }),
+      button('Fokus', () => {
+        applyFields();
+        doc.view.focus = n.id;
+        viewport.scrollTo(0, 0);
+        rebuild();
+      }),
+    );
+    details.append(actions);
+    const edit = document.createElement('div');
+    edit.className = 'actions';
+    edit.append(
+      button('Kopieren', () => {
+        applyFields();
+        clip = { id: n.id, mode: 'copy' };
+        renderProperties();
+      }),
+      button('Verschieben', () => {
+        applyFields();
+        clip = { id: n.id, mode: 'move' };
+        renderProperties();
+      }),
+      button(
+        'Löschen',
+        () => {
+          applyFields();
+          if (confirm('Element mit allen untergeordneten Inhalten löschen?')) {
+            history.remove(n.id);
+            selected = null;
+            markDirty();
+            rebuild();
+          }
+        },
+        'small danger',
+      ),
+    );
+    details.append(edit);
+    if (n.slots.condition) {
+      const logic = document.createElement('div');
+      logic.className = 'actions';
+      for (const kind of ['And', 'Or', 'Not'] as const)
+        logic.append(button(names[kind] + ' ergänzen', () => wrapExpression(n.id, kind)));
+      details.append(logic);
+    }
+    if (n.kind === 'OnSelector') {
+      const chooser = document.createElement('select');
+      chooser.setAttribute('aria-label', 'Fallzweig fokussieren');
+      const def = document.createElement('option');
+      def.textContent = 'Fallzweig einzeln öffnen …';
+      def.value = '';
+      chooser.append(def);
+      for (const id of n.slots.branches) {
+        const b = doc.nodes[id],
+          o = document.createElement('option');
+        o.value = id;
+        o.textContent = b.defaultBranch ? 'Sonst' : label(doc, b);
+        chooser.append(o);
+      }
+      chooser.onchange = () => {
+        if (chooser.value) {
+          applyFields();
+          selected = chooser.value;
+          doc.view.focus = selected;
+          viewport.scrollTo(0, 0);
+          rebuild();
+        }
+      };
+      details.append(chooser);
+    }
+  }
+  const destinations = $<HTMLSelectElement>('destination');
+  destinations.replaceChildren();
+  const option = (value: string, text: string) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = text;
+    destinations.append(o);
+  };
+  option('end', 'Am Ende des Programms');
+  if (n) {
+    const loc = parentIndex.get(n.id);
+    if (loc && !['condition', 'header', 'operands'].includes(loc.slot)) {
+      option('before', 'Vor diesem Element');
+      option('after', 'Nach diesem Element');
+    }
+    for (const s of slotNames[n.kind])
+      if (!['header', 'condition', 'operands'].includes(s)) option('inside:' + s, 'In ' + slotLabels[s] + ' einfügen');
+    destinations.value = n.slots.body
+      ? 'inside:body'
+      : n.kind === 'OnSelector'
+        ? 'inside:branches'
+        : loc && !['condition', 'header', 'operands'].includes(loc.slot)
+          ? 'after'
+          : 'end';
+  }
+  $<HTMLButtonElement>('paste').disabled = !clip || !doc.nodes[clip.id];
+  $('clipboard').textContent =
+    clip && doc.nodes[clip.id]
+      ? (clip.mode === 'copy' ? 'Kopiert: ' : 'Verschieben: ') + label(doc, doc.nodes[clip.id]).slice(0, 70)
+      : '';
+}
+function wrapExpression(id: string, kind: 'And' | 'Or' | 'Not') {
+  applyFields();
+  const n = doc.nodes[id],
+    before = structuredClone(n),
+    after = structuredClone(n),
+    tmp = emptyDocument();
+  tmp.nextId = doc.nextId;
+  const op = addNode(tmp, kind);
+  op.slots.operands = n.slots.condition.slice();
+  if (kind !== 'Not') {
+    const text = addNode(tmp, 'Text');
+    text.text = 'Weitere Bedingung';
+    op.slots.operands.push(text.id);
+  }
+  after.slots.condition = [op.id];
+  doc.nextId = tmp.nextId;
+  history.commit([
+    { id, before, after },
+    ...Object.values(tmp.nodes).map((n) => ({ id: n.id, before: null, after: n })),
+  ]);
+  markDirty();
+  rebuild();
+}
+function destination(): Location {
+  const value = $<HTMLSelectElement>('destination').value;
+  if (!selected || value === 'end') return { parent: null, slot: 'roots', index: doc.roots.length };
+  if (value.startsWith('inside:')) {
+    const slot = value.slice(7);
+    return { parent: selected, slot, index: doc.nodes[selected].slots[slot].length };
+  }
+  const loc = parentIndex.get(selected)!;
+  return { ...loc, index: loc.index + (value === 'after' ? 1 : 0) };
+}
+function download(name: string, bytes: Uint8Array | string, type: string) {
+  const blob = new Blob([bytes as BlobPart], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement('a');
+  a.href = url;
+  // eslint-disable-next-line no-control-regex -- Steuerzeichen im Dateinamen werden bewusst ersetzt.
+  a.download = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+$('preview').onclick = () =>
+  safe(() => {
+    applyFields();
+    const result = exportFOP(doc);
+    message('FOP-Vorschau · ' + result.bytes.length.toLocaleString('de-CH') + ' Bytes', result.text);
+  });
+$('export').onclick = () => {
+  void exportToFile();
+};
+$('undo').onclick = () =>
+  safe(() => {
+    applyFields();
+    history.undo();
+    markDirty();
+    rebuild();
+  });
+$('redo').onclick = () =>
+  safe(() => {
+    applyFields();
+    history.redo();
+    markDirty();
+    rebuild();
+  });
+$('insert').onclick = () =>
+  safe(() => {
+    applyFields();
+    selected = history.insert($<HTMLSelectElement>('insert-kind').value as Kind, destination());
+    markDirty();
+    rebuild();
+    reveal(selected);
+  });
+$('paste').onclick = () =>
+  safe(() => {
+    applyFields();
+    if (!clip) return;
+    const at = destination();
+    if (clip.mode === 'copy') selected = history.copy(clip.id, at);
+    else {
+      history.move(clip.id, at);
+      selected = clip.id;
+      clip = null;
+    }
+    markDirty();
+    rebuild();
+    reveal(selected!);
+  });
+function reveal(id: string) {
+  let b = scene.byId.get(id);
+  if (!b) {
+    doc.view.focus = id;
+    rebuild();
+    b = scene.byId.get(id);
+  }
+  if (b) viewport.scrollTo(Math.max(0, b.x * scale - 20), Math.max(0, b.y * scale - 20));
+}
+$('home').onclick = () =>
+  safe(() => {
+    applyFields();
+    doc.view.focus = null;
+    viewport.scrollTo(0, 0);
+    rebuild();
+  });
+$('collapse-all').onclick = () => {
+  applyFields();
+  for (const n of Object.values(doc.nodes)) if (isFoldable(n)) collapsed.add(n.id);
+  doc.view.collapsed = [...collapsed];
+  rebuild();
+};
+$('expand-all').onclick = () => {
+  applyFields();
+  collapsed.clear();
+  doc.view.collapsed = [];
+  rebuild();
+};
+$('focus-up').onclick = () => {
+  applyFields();
+  const id = doc.view.focus;
+  doc.view.focus = id ? parentIndex.get(id)?.parent || null : null;
+  viewport.scrollTo(0, 0);
+  rebuild();
+};
+$('case-layout').onchange = () =>
+  safe(() => {
+    applyFields();
+    doc.view.caseLayout = $<HTMLSelectElement>('case-layout').value === 'horizontal' ? 'horizontal' : 'vertical';
+    markDirty();
+    rebuild();
+    if (selected) reveal(selected);
+    else viewport.scrollTo(0, 0);
+  });
+$('zoom').onchange = () => {
+  scale = Number($<HTMLSelectElement>('zoom').value);
+  rebuild(false);
+};
+$('search').oninput = () => {
+  navLimit = 250;
+  renderNav();
+};
+$('output-encoding').onchange = () => {
+  doc.profile.encoding = $<HTMLSelectElement>('output-encoding').value as Encoding;
+  markDirty();
+};
+$('code-language').onchange = () => {
+  doc.profile.codeLanguage = $<HTMLSelectElement>('code-language').value as 'de' | 'en';
+  markDirty();
+};
+$('newline').onchange = () => {
+  doc.profile.newline = $<HTMLSelectElement>('newline').value as 'LF' | 'CRLF';
+  markDirty();
+};
+function showDiagnostics() {
+  const errors = [...doc.diagnostics, ...validate(doc), ...procedureDiagnostics(doc)];
+  message(
+    'Import- und Strukturprüfung',
+    errors.length
+      ? errors.map((e) => (e.line ? 'Quellzeile ' + e.line + ': ' : '') + e.message).join('\n')
+      : 'Keine Import-, Struktur- oder Prozedurkonflikte gefunden.\nProzedurverwaltung: eigene Variablen, getrennt je Aufrufebene.\nAbas-Ausführungstest der neuen Verwaltung steht aus.',
+  );
+}
+$('diagnostics').onclick = () =>
+  safe(() => {
+    applyFields();
+    showDiagnostics();
+  });
+$('message-close').onclick = () => $<HTMLDialogElement>('message-dialog').close();
+$('demo').onclick = () =>
+  safe(() => {
+    if (!confirmReplace()) return;
+    const sample =
+      'EasyCASE=SPX V6.8\nLevel=1:1\nText:1\nLine=Beispiel\nEndText;\nLevelBody;\nText:2\nLine=.art integer zaehler\nLine=.formel U|zaehler = 0\nEndText;\nRepeat:3\nText:4\nLine=.formel U|zaehler = U|zaehler + 1\nEndText;\nIf:5\nText:6\nLine=U|zaehler = 2\nEndText;\nThen;\nText:7\nLine=.. Zweiter Durchlauf\nEndText;\nElse;\nDummy;\nEndIf;\nUntil;\nText:8\nLine=U|zaehler = 3\nEndText;\nEndRepeat;\nEndLevel;';
+    const language = doc.profile.codeLanguage || 'de';
+    const example = parseETF(
+      language === 'en'
+        ? sample.replace(/Line=\.art /g, 'Line=.type ').replace(/Line=\.formel /g, 'Line=.formula ')
+        : sample,
+      'Beispiel',
+    );
+    example.profile.codeLanguage = language;
+    setDocument(example, true);
+  });
+window.addEventListener('beforeunload', (e) => {
+  if (dirty || tabs.some((t) => t.dirty)) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+  if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    $('undo').click();
+  }
+  if (e.ctrlKey && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    $('redo').click();
+  }
+  if (e.ctrlKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    $('save').click();
+  }
+});
 
-function toggleFold(id:string){applyFields();const before=scene.byId.get(id);const offset=before?before.y*scale-viewport.scrollTop:0;if(collapsed.has(id))collapsed.delete(id);else collapsed.add(id);doc.view.collapsed=[...collapsed];rebuild();const after=scene.byId.get(id);if(after)viewport.scrollTop=Math.max(0,after.y*scale-offset);scheduleCanvas();}
-function decorateCanvas(){spots.clear();const left=viewport.scrollLeft/scale,top=viewport.scrollTop/scale,right=left+viewport.clientWidth/scale,bottom=top+viewport.clientHeight/scale;let seq=0;
- const spot=(x:number,y:number,w:number,loc:Location)=>{if(doc.view.readingMode)return;if(y<top+3||y>bottom-8||x+w<left||x>right)return;const key='p'+seq++;spots.set(key,loc);const g=element('g',{'data-spot':key,class:'insert-spot'});g.append(element('rect',{x,y:y-8,width:w,height:16,fill:'transparent'}),element('line',{x1:x+8,y1:y,x2:x+w-8,y2:y}),element('circle',{cx:x+Math.min(w/2,100),cy:y,r:8,fill:'#fff',stroke:'#8eaf9c'}),element('text',{x:x+Math.min(w/2,100),y:y+4,'text-anchor':'middle','font-size':13,fill:'#507b64'},'+'));svg.append(g);};
- const listSpots=(ids:string[],parent:string|null,slot:string,x:number,y:number,w:number)=>{spot(x,y,w,{parent,slot,index:0});for(let i=0;i<ids.length;i++){const b=scene.byId.get(ids[i]);if(b)spot(x,b.y+b.h+8,w,{parent,slot,index:i+1});}};
- if(!doc.view.focus)listSpots(doc.roots,null,'roots',16,8,Math.max(300,Math.min(scene.width-32,700)));
- for(const b of scene.byId.values()){if(b.x+b.w<left||b.x>right||b.y+b.h<top||b.y>bottom)continue;const n=doc.nodes[b.id];if(!collapsed.has(b.id)){if(n.kind==='If'){for(let i=0;i<2;i++){const lane=b.lanes[i];if(lane)listSpots(n.slots[i?'else':'then'],n.id,i?'else':'then',lane.x,b.y+b.head+43,lane.w);}}else if(n.slots.body)listSpots(n.slots.body,n.id,'body',b.x+12,b.y+b.head+9,b.w-12);}
- if(b.y>=top&&b.y<bottom){if(isFoldable(n)){const fold=element('g',{'data-fold':b.id,role:'button',tabindex:0,'aria-label':(collapsed.has(b.id)?'Aufklappen: ':'Zuklappen: ')+label(doc,n),'aria-expanded':String(!collapsed.has(b.id)),style:'cursor:pointer'});fold.append(element('rect',{x:b.x+3,y:b.y+3,width:26,height:26,rx:4,fill:collapsed.has(b.id)?'#cdd2d6':'#dce7de'}),element('text',{x:b.x+10,y:b.y+22,fill:'#305d44','font-size':17},collapsed.has(b.id)?'▸':'▾'));svg.append(fold);}if(doc.view.readingMode)continue;const grip=element('g',{'data-grip':b.id,style:'cursor:grab'});grip.append(element('rect',{x:b.x+b.w-29,y:b.y+2,width:26,height:24,fill:'#e6eee7',rx:3}),element('text',{x:b.x+b.w-23,y:b.y+19,'font-size':16,fill:'#507760'},'⠿'));svg.append(grip);}}
- for(const id of validSelection()){const b=scene.byId.get(id);if(b)svg.append(element('rect',{x:b.x,y:b.y,width:b.w,height:b.h,class:'selected-whole'}));}quickbar();}
-function showInsert(loc:Location,x:number,y:number){if(doc.view.readingMode)return;target={...loc};const pop=$('insert-popover');pop.replaceChildren();const cap=document.createElement('div');cap.className='caption';cap.textContent='Hier einfügen';pop.append(cap);for(const kind of ['Text','If','While','Repeat','Level','OnSelector'] as Kind[])pop.append(button(names[kind],()=>{closePop();selected=history.insert(kind,loc);selection=[selected];anchor=selected;markDirty();rebuild();reveal(selected);editNode(selected);}));if(buffer)pop.append(button(buffer.cut?'Ausgeschnittene Blöcke einsetzen':'Kopierte Blöcke einsetzen',()=>pasteAt(loc)));pop.hidden=false;pop.style.left=Math.max(8,Math.min(x,innerWidth-245))+'px';pop.style.top=Math.max(8,Math.min(y,innerHeight-pop.offsetHeight-12))+'px';}
-function editNode(id:string){if(doc.view.readingMode)return;applyFields();const n=doc.nodes[id];const ids=n.kind==='Text'?[id]:(n.slots.condition||n.slots.header||[]);if(ids.length!==1){message('Ausdruck bearbeiten','Kein einzelner Ausdruck zum Bearbeiten vorhanden.');return;}editorId=ids[0];editorExpression=!!n.slots.condition||doc.nodes[editorId].kind!=='Text';const box=$('inline-editor');$<HTMLTextAreaElement>('inline-text').value=editorExpression?conditionDisplay(doc,[editorId]):doc.nodes[editorId].text;$('inline-label').textContent=names[n.kind]+' bearbeiten'+(editorExpression?term(' · UND / ODER / NICHT',' · AND / OR / NOT'):'');$('condition-preview').hidden=!editorExpression;$<HTMLDetailsElement>('condition-preview').open=false;updateConditionPreview();box.hidden=false;fitInlineEditor(id);$<HTMLTextAreaElement>('inline-text').focus();$<HTMLTextAreaElement>('inline-text').select();}
-$<HTMLTextAreaElement>('inline-text').oninput=()=>{markDirty();updateConditionPreview();fitInlineEditor();};
-$('inline-apply').onclick=()=>safe(()=>{if(editorId){const before=history.revision;const text=$<HTMLTextAreaElement>('inline-text').value;if(editorExpression)editCondition(history,editorId,text);else history.text(editorId,text);fields=[];if(history.revision!==before)markDirty();}editorId=null;$('inline-editor').hidden=true;rebuild();});$('inline-cancel').onclick=()=>{editorId=null;$('inline-editor').hidden=true;};
-function copySelection(cut:boolean){if(doc.view.readingMode&&cut)return;applyFields();const ids=validSelection().slice();if(!ids.length)return;if(ids.length>1)siblingRange(doc,ids[0],ids.at(-1)!);buffer={ids,nodes:ids.flatMap(id=>descendants(doc,id).map(x=>structuredClone(doc.nodes[x]))),cut};status(ids.length+' Block/Blöcke '+(cut?'zum Verschieben markiert':'kopiert')+' · Einfügestelle anklicken und Strg+V drücken');}
-function pasteAt(loc:Location){if(doc.view.readingMode)return;applyFields();if(!buffer)return;const data=buffer;if(data.cut)data.nodes=data.ids.flatMap(id=>descendants(doc,id).map(x=>structuredClone(doc.nodes[x])));const sourceLocations=locations(doc);let at={...loc};if(data.cut){for(const id of data.ids)history.checkTarget(id,loc,true);at.index-=data.ids.filter(id=>{const s=sourceLocations.get(id);return s&&s.parent===loc.parent&&s.slot===loc.slot&&s.index<loc.index;}).length;}
- const remap=new Map<string,string>();for(const n of data.nodes)remap.set(n.id,data.cut?n.id:'n'+doc.nextId++);const newIds=data.ids.map(id=>remap.get(id)!);history.batch(()=>{if(data.cut)for(const id of data.ids)history.remove(id);for(let i=0;i<data.ids.length;i++){const source=data.ids[i];const map=new Map(data.nodes.map(n=>[n.id,n]));const work=[source],nodes:Node[]=[];while(work.length){const n=structuredClone(map.get(work.pop()!)!);work.push(...childIds(n));n.id=remap.get(n.id)!;for(const s of slotNames[n.kind])n.slots[s]=n.slots[s].map(id=>remap.get(id)!);nodes.push(n);}if((loc.slot==='branches')!==(nodes[0].kind==='OnSelectorBranch'))throw Error('Fallzweige benötigen eine Fallauswahl als Ziel.');history.attach(nodes,newIds[i],{...at,index:at.index+i});}});if(data.cut)buffer=null;selection=newIds;selected=newIds[0];closePop();markDirty();rebuild();reveal(selected);}
-function duplicate(){if(doc.view.readingMode)return;copySelection(false);if(!buffer)return;const loc=parentIndex.get(buffer.ids.at(-1)!)!;pasteAt({...loc,index:loc.index+1});}
-function deleteSelection(){if(doc.view.readingMode)return;applyFields();const ids=validSelection().slice();if(!ids.length)return;if(!confirm(ids.length+' ausgewählte Blöcke mit allen Inhalten löschen?'))return;history.batch(()=>{for(const id of ids)history.remove(id);});selection=[];selected=null;markDirty();rebuild();}
-let lastDiagramClick:{id:string;time:number;x:number;y:number}|null=null;
-function handleDiagramClick(e:MouseEvent){const previous=lastDiagramClick;lastDiagramClick=null;const el=e.target as Element;const procedure=el.closest('[data-procedure]');if(procedure){goToProcedure(procedure.getAttribute('data-procedure')!);return;}const jump=el.closest('[data-jump]');if(jump){goToJump(jump.getAttribute('data-jump')!);return;}const include=el.closest('[data-include]');if(include){offerInclude(include.getAttribute('data-include')!);return;}const fold=el.closest('[data-fold]');if(fold){toggleFold(fold.getAttribute('data-fold')!);return;}const seam=el.closest('[data-spot]');if(seam){showInsert(spots.get(seam.getAttribute('data-spot')!)!,e.clientX,e.clientY);return;}const g=el.closest('[data-id]');if(g){const id=g.getAttribute('data-id')!;closePop();const double=!e.shiftKey&&previous?.id===id&&e.timeStamp-previous.time>=0&&e.timeStamp-previous.time<=550&&Math.abs(e.clientX-previous.x)<=6&&Math.abs(e.clientY-previous.y)<=6;if(double){editNode(id);return;}pick(id,e.shiftKey);if(!e.shiftKey)lastDiagramClick={id,time:e.timeStamp,x:e.clientX,y:e.clientY};}else if(!el.closest('[data-grip]'))clearSelection();}
-svg.addEventListener('click',e=>safe(()=>handleDiagramClick(e)));
-let dragging=false;svg.addEventListener('pointerdown',e=>safe(()=>{const grip=(e.target as Element).closest('[data-grip]');if(!grip)return;const id=grip.getAttribute('data-grip')!;if(!selection.includes(id))pick(id);copySelection(true);dragging=true;e.preventDefault();status('Block auf eine + Einfügestelle ziehen.');}));
-document.addEventListener('pointerup',e=>{if(!dragging)return;dragging=false;const seam=(e.target as Element).closest('[data-spot]');if(seam)safe(()=>pasteAt(spots.get(seam.getAttribute('data-spot')!)!));else status('Verschieben abgebrochen. Keine Änderung.');});
-document.addEventListener('pointerdown',e=>{if(!(e.target as Element).closest('#insert-popover,[data-spot]'))closePop();});
-window.addEventListener('keydown',e=>{if(e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLInputElement){if(e.ctrlKey&&e.key==='Enter'&&editorId){e.preventDefault();$('inline-apply').click();}if(e.key==='Escape')$('inline-cancel').click();return;}if($<HTMLDialogElement>('message-dialog').open)return;safe(()=>{if(e.ctrlKey&&['c','x','v','d'].includes(e.key.toLowerCase())){e.preventDefault();if(e.key.toLowerCase()==='c')copySelection(false);if(e.key.toLowerCase()==='x')copySelection(true);if(e.key.toLowerCase()==='d')duplicate();if(e.key.toLowerCase()==='v'){const loc=selected?parentIndex.get(selected):null;pasteAt(target||(loc?{...loc,index:loc.index+1}:{parent:null,slot:'roots',index:doc.roots.length}));}}const folding=(e.target as Element).closest?.('[data-fold]');if(folding&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggleFold(folding.getAttribute('data-fold')!);return;}if(e.key==='Delete'){e.preventDefault();deleteSelection();}if(e.key==='F2'&&selected){e.preventDefault();editNode(selected);}if(e.key==='Escape'){closePop();$('inline-cancel').click();clearSelection();}});});
-const profile=$('profile-controls');for(const id of ['output-encoding','newline','code-language']){const labelEl=document.createElement('label');labelEl.textContent=id==='newline'?'Zeilenenden':id==='code-language'?'Sprache des generierten FOP-Codes':'Zeichensatz';profile.append(labelEl,$(id));}$('settings').onclick=()=>$<HTMLDialogElement>('output-dialog').showModal();$('profile-close').onclick=()=>$<HTMLDialogElement>('output-dialog').close();
+let selection: string[] = [],
+  anchor: string | null = null,
+  target: Location | null = null,
+  editorId: string | null = null,
+  editorExpression = false;
+let buffer: { ids: string[]; nodes: Node[]; cut: boolean } | null = null;
+const spots = new Map<string, Location>();
+function validSelection() {
+  selection = selection.filter((id) => doc.nodes[id]);
+  if (selected && !selection.includes(selected)) selection = [selected];
+  return selection;
+}
+function clearSelection() {
+  applyFields();
+  selection = [];
+  selected = null;
+  anchor = null;
+  target = null;
+  closePop();
+  renderProperties();
+  renderNav();
+  renderCanvas();
+  status('Auswahl aufgehoben.');
+}
+function pick(id: string, shift = false) {
+  applyFields();
+  selection = shift && anchor ? siblingRange(doc, anchor, id) : [id];
+  if (!shift) anchor = id;
+  selected = id;
+  target = null;
+  renderProperties();
+  renderNav();
+  renderCanvas();
+}
+function quickbar() {
+  const hasArea =
+    validSelection().some((id) => isFoldable(doc.nodes[id])) ||
+    !!(doc.view.focus && isFoldable(doc.nodes[doc.view.focus]));
+  $<HTMLButtonElement>('expand-below').disabled = !hasArea;
+  $<HTMLButtonElement>('collapse-below').disabled = !hasArea;
+  const bar = $('quickbar');
+  bar.replaceChildren();
+  const ids = validSelection();
+  bar.hidden = !!doc.view.readingMode || !ids.length;
+  if (doc.view.readingMode || !ids.length) return;
+  bar.append(button(ids.length > 1 ? ids.length + ' Blöcke' : 'Bearbeiten', () => editNode(ids[0])));
+  bar.append(button('Auswahl aufheben', clearSelection));
+  bar.append(
+    button('Kopieren', () => copySelection(false)),
+    button('Ausschneiden', () => copySelection(true)),
+    button('Duplizieren', duplicate),
+  );
+  for (const kind of ['If', 'While', 'Repeat'] as const)
+    bar.append(
+      button('In ' + names[kind], () => {
+        selected = wrapNodes(history, ids, kind);
+        selection = [selected];
+        markDirty();
+        rebuild();
+        reveal(selected);
+        editNode(selected);
+      }),
+    );
+  bar.append(
+    button('▸ / ▾', () => {
+      for (const id of ids) {
+        if (collapsed.has(id)) collapsed.delete(id);
+        else collapsed.add(id);
+      }
+      rebuild();
+    }),
+    button('Löschen', deleteSelection),
+  );
+}
+function closePop() {
+  $('insert-popover').hidden = true;
+}
+function isFoldable(n: Node) {
+  return !!(n.slots.body || n.slots.then || n.slots.branches);
+}
+function foldSummary(n: Node) {
+  if (doc.view.language === 'en') {
+    if (n.kind === 'If')
+      return 'Then: ' + n.slots.then.length + ' · Else: ' + n.slots.else.length + ' blocks · collapsed';
+    if (n.slots.branches) return n.slots.branches.length + ' branches · collapsed';
+    return (n.slots.body?.length || 0) + ' direct blocks · collapsed';
+  }
+  if (n.kind === 'If')
+    return 'Dann: ' + n.slots.then.length + ' · Sonst: ' + n.slots.else.length + ' Blöcke · eingeklappt';
+  if (n.slots.branches) return n.slots.branches.length + ' Fallzweige · eingeklappt';
+  return (n.slots.body?.length || 0) + ' direkte Blöcke · eingeklappt';
+}
 
-type LocalHandle={name:string;getFile:()=>Promise<File>;createWritable:()=>Promise<{write:(data:string|Uint8Array)=>Promise<void>;close:()=>Promise<void>;abort?:()=>Promise<void>}>;isSameEntry?:(other:LocalHandle)=>Promise<boolean>};
-type NavigationPlace={focus:string|null;selected:string|null;collapsed:string[];scale:number;x:number;y:number;search:string};
-type TabState={exportHandle?:LocalHandle;back?:NavigationPlace[];id:number;doc:ReturnType<typeof emptyDocument>;history:History;dirty:boolean;selected:string|null;collapsed:Set<string>;scale:number;scrollX:number;scrollY:number;search:string;handle:LocalHandle|null};
-const tabs:TabState[]=[];let activeTab=0,nextTab=1,openingHandle:LocalHandle|null=null,pendingKind:'etf'|'spx'|'source'='etf',closeTarget:number|null=null,saving=false;
-const fileAPI=window as unknown as {showOpenFilePicker?:(options:object)=>Promise<LocalHandle[]>;showSaveFilePicker?:(options:object)=>Promise<LocalHandle>};
-function stashTab(){applyFields();const t=tabs.find(t=>t.id===activeTab);if(t){t.doc=doc;t.history=history;t.dirty=dirty;t.selected=selected;t.collapsed=new Set(collapsed);t.scale=scale;t.scrollX=viewport.scrollLeft;t.scrollY=viewport.scrollTop;t.search=$<HTMLInputElement>('search').value;}}
-function setDocument(next:ReturnType<typeof emptyDocument>,imported=false,handle:LocalHandle|null=null){stashTab();const blank=tabs.find(t=>t.id===activeTab&&!t.dirty&&!t.doc.roots.length&&t.doc.metadata.sourceReadOnly!=='true');if(blank)tabs.splice(tabs.indexOf(blank),1);const t:TabState={id:nextTab++,doc:next,history:new History(next),dirty:imported,selected:null,collapsed:new Set(next.view.collapsed),scale:1,scrollX:0,scrollY:0,search:'',handle};tabs.push(t);activeTab=t.id;activateDocument(next,imported);t.history=history;scale=1;rebuild();}
-function switchTab(id:number){if(id===activeTab)return;stashTab();const t=tabs.find(t=>t.id===id);if(!t)return;activeTab=id;activateDocument(t.doc,t.dirty);history=t.history;selected=t.selected;selection=selected?[selected]:[];collapsed=new Set(t.collapsed);scale=t.scale;$<HTMLSelectElement>('zoom').value=String(scale);$<HTMLInputElement>('search').value=t.search;rebuild();viewport.scrollTo(t.scrollX,t.scrollY);}
-function renderTabs(){$<HTMLButtonElement>('navigation-back').disabled=!tabs.find(t=>t.id===activeTab)?.back?.length;const host=$('file-tabs');host.replaceChildren();for(const t of tabs){const active=t.id===activeTab;const row=document.createElement('div');row.className='file-tab'+(active?' active':'');const b=button(t.doc.name+((active?dirty:t.dirty)?' •':'')+(t.doc.metadata.sourceReadOnly==='true'?' [FOP]':''),()=>switchTab(t.id));b.setAttribute('role','tab');b.setAttribute('aria-selected',String(active));b.title=t.handle?'Speicherdatei: '+t.handle.name:'Noch kein direkter Speicherort';row.append(b,button('×',()=>requestClose(t.id),'tab-close'));host.append(row);}if(activeTab){const t=tabs.find(t=>t.id===activeTab);$('save').title=t?.handle?'Speichert direkt in '+t.handle.name:'Projektdatei wählen';}}
-function requestClose(id:number){stashTab();const t=tabs.find(t=>t.id===id);if(!t)return;if(t.dirty){closeTarget=id;$('close-name').textContent='Änderungen an „'+t.doc.name+'“ speichern?';$<HTMLDialogElement>('close-dialog').showModal();}else removeTab(id);}
-function removeTab(id:number){const index=tabs.findIndex(t=>t.id===id);if(index<0)return;tabs.splice(index,1);if(activeTab===id){activeTab=0;if(tabs.length)switchTab(tabs[Math.min(index,tabs.length-1)].id);else{doc=emptyDocument();history=new History(doc);dirty=false;fields=[];editorId=null;setDocument(doc);}}renderTabs();}
-async function saveActive(asNew=false):Promise<boolean>{if(saving)return false;saving=true;try{applyFields();if(doc.metadata.sourceReadOnly==='true'){status('FOP-Quelltext ist schreibgeschützt.');return false;}stashTab();const t=tabs.find(t=>t.id===activeTab)!;t.doc.view.collapsed=[...collapsed];const content=projectJSON(t.doc);let handle=asNew?null:t.handle;if(!handle&&fileAPI.showSaveFilePicker){handle=await fileAPI.showSaveFilePicker({suggestedName:t.doc.name+'.fopproj',types:[{description:'FOP-Studio-Projekt',accept:{'application/json':['.fopproj']}}],...(t.handle?{startIn:t.handle}:{})});}if(handle){const writable=await handle.createWritable();await writable.write(content);await writable.close();t.handle=handle;}else{download(t.doc.name+'.fopproj',content,'application/json');if(!confirm('Dieser Browser kann den Speicherort nicht wiederverwenden. Wurde die heruntergeladene Projektdatei erfolgreich gespeichert?'))return false;}if(doc===t.doc)applyFields();const unchanged=projectJSON(t.doc)===content;t.dirty=!unchanged;if(t.id===activeTab){dirty=!unchanged;rebuild(false);}renderTabs();status(handle?'Gespeichert in '+handle.name:'Download bestätigt; zum direkten Speichern Edge oder Chrome mit Dateizugriff verwenden.');return unchanged;}catch(e){if((e as Error).name!=='AbortError')message('Speichern fehlgeschlagen',String(e)+'\nDie Änderungen bleiben geöffnet.');return false;}finally{saving=false;}}
-async function openFile(){try{if(fileAPI.showOpenFilePicker){const [handle]=await fileAPI.showOpenFilePicker({multiple:false});if(handle)await readOpenedFile(await handle.getFile(),handle);}else $<HTMLInputElement>('file').click();}catch(e){if((e as Error).name!=='AbortError')message('Dateizugriff nicht verfügbar',String(e)+'\nÜber „Datei ohne direkten Zugriff öffnen“ kannst du weiterhin Dateien laden.');}}
-async function readOpenedFile(file:File,handle:LocalHandle|null){if(handle){for(const t of tabs){if(t.handle?.isSameEntry&&await t.handle.isSameEntry(handle)){switchTab(t.id);return;}}}const bytes=new Uint8Array(await file.arrayBuffer());if(file.name.toLowerCase().endsWith('.fopproj')){setDocument(loadProject(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),false,handle);return;}openingHandle=handle;pendingKind=(file.name.toLowerCase().endsWith('.spx')||String.fromCharCode(...bytes.slice(0,3))==='SPX')?'spx':file.name.toLowerCase().endsWith('.etf')||new TextDecoder().decode(bytes.slice(0,50)).includes('EasyCASE=')?'etf':'source';pendingFile={bytes,name:file.name.replace(/\.(etf|spx)$/i,'')};$('import-dialog').querySelector('h2')!.textContent=pendingKind==='spx'?'SPX-Zeichensatz auswählen (Referenzen: Windows-1252)':pendingKind==='etf'?'ETF-Zeichensatz auswählen':'FOP-Quelltext öffnen · Zeichensatz';if(pendingKind==='spx')$<HTMLSelectElement>('input-encoding').value='windows-1252';updateImportPreview();$<HTMLDialogElement>('import-dialog').showModal();}
-function updateImportPreview(){if(!pendingFile)return;try{const enc=$<HTMLSelectElement>('input-encoding').value as Encoding;const text=pendingKind==='spx'?Object.values(importSPX(pendingFile.bytes,enc).nodes).filter(n=>n.kind==='Text').map(n=>n.text).join('\n'):decode(pendingFile.bytes,enc);const lines=pendingKind==='etf'?text.split(/\r?\n/).filter(l=>l.startsWith('Line=')).map(l=>l.slice(5)):text.split(/\r?\n/);$('import-preview').textContent=lines.slice(0,50).join('\n');$<HTMLButtonElement>('import-confirm').disabled=false;}catch(e){$('import-preview').textContent=String(e);$<HTMLButtonElement>('import-confirm').disabled=true;}}
-$('open').onclick=()=>{void openFile();};$('welcome-open').onclick=()=>{void openFile();};$<HTMLInputElement>('file').onchange=async()=>{const f=$<HTMLInputElement>('file').files?.[0];$<HTMLInputElement>('file').value='';if(f)try{await readOpenedFile(f,null);}catch(e){message('Öffnen fehlgeschlagen',String(e));}};
-$('input-encoding').onchange=updateImportPreview;$('import-cancel').onclick=()=>{pendingFile=null;openingHandle=null;$<HTMLDialogElement>('import-dialog').close();};$('import-confirm').onclick=()=>safe(()=>{if(!pendingFile)return;const enc=$<HTMLSelectElement>('input-encoding').value as Encoding;let next;if(pendingKind==='spx')next=importSPX(pendingFile.bytes,enc,pendingFile.name);else if(pendingKind==='etf')next=importETF(pendingFile.bytes,enc,pendingFile.name);else{next=emptyDocument(pendingFile.name);next.metadata.sourceOnly=decode(pendingFile.bytes,enc);next.metadata.sourceReadOnly='true';}next.metadata.inputEncoding=enc;$<HTMLDialogElement>('import-dialog').close();setDocument(next,pendingKind!=='source',null);pendingFile=null;openingHandle=null;if(next.diagnostics.length)showDiagnostics();});
-$('new').onclick=()=>safe(()=>setDocument(emptyDocument()));$('save').onclick=()=>{void saveActive();};$('save-as').onclick=()=>{void saveActive(true);};$('close-file').onclick=()=>requestClose(activeTab);$('close-cancel').onclick=()=>$<HTMLDialogElement>('close-dialog').close();$('close-discard').onclick=()=>{$<HTMLDialogElement>('close-dialog').close();if(closeTarget!==null)removeTab(closeTarget);};$('close-save').onclick=async()=>{if(closeTarget===null)return;const id=closeTarget;$<HTMLDialogElement>('close-dialog').close();switchTab(id);if(await saveActive())removeTab(id);};
+function foldBelow(fold: boolean) {
+  applyFields();
+  const ids = validSelection().filter((id) => isFoldable(doc.nodes[id]));
+  if (!ids.length && doc.view.focus && isFoldable(doc.nodes[doc.view.focus])) ids.push(doc.view.focus);
+  if (!ids.length) return;
+  const first = scene.byId.get(ids[0]);
+  const offset = first ? first.y * scale - viewport.scrollTop : 0;
+  const roots = new Set(ids);
+  const seen = new Set<string>();
+  for (const id of ids) for (const child of descendants(doc, id)) seen.add(child);
+  for (const id of seen)
+    if (isFoldable(doc.nodes[id])) {
+      if (fold && !roots.has(id)) collapsed.add(id);
+      else collapsed.delete(id);
+    }
+  doc.view.collapsed = [...collapsed];
+  rebuild();
+  const after = scene.byId.get(ids[0]);
+  if (after) viewport.scrollTop = Math.max(0, after.y * scale - offset);
+  scheduleCanvas();
+  status(
+    fold
+      ? 'Untergeordnete Strukturen zugeklappt; der ausgewählte Bereich bleibt offen.'
+      : 'Alle untergeordneten Strukturen aufgeklappt.',
+  );
+}
+$('expand-below').onclick = () => safe(() => foldBelow(false));
+$('collapse-below').onclick = () => safe(() => foldBelow(true));
 
-function jumpName(line:string):string|null{const m=line.match(/^\s*\.(?:we(?:i(?:t(?:e(?:r)?)?)?)?|continue)\s+(?:"([^"\r\n]+)"|([^\s?]+))(?:\s*\?[^\r\n]+)?\s*$/i);const target=m?(m[1]||m[2]):null;return target&&!target.includes("'")?target:null;}
-function labelKey(name:string):string{return name.toUpperCase().slice(0,7);}
-function jumpTargets(ref:string):{id:string|null;line:number}[]{const hits:{id:string|null;line:number}[]=[];const scan=(text:string,id:string|null)=>text.split(/\r?\n/).forEach((line,i)=>{const m=line.match(/^\s*!([^\s:]+)/);if(m&&labelKey(m[1])===labelKey(ref))hits.push({id,line:i});});if(doc.metadata.sourceReadOnly==='true')scan(doc.metadata.sourceOnly||'',null);else for(const n of Object.values(doc.nodes))if(n.kind==='Text')scan(n.text,n.id);return hits;}
+function toggleFold(id: string) {
+  applyFields();
+  const before = scene.byId.get(id);
+  const offset = before ? before.y * scale - viewport.scrollTop : 0;
+  if (collapsed.has(id)) collapsed.delete(id);
+  else collapsed.add(id);
+  doc.view.collapsed = [...collapsed];
+  rebuild();
+  const after = scene.byId.get(id);
+  if (after) viewport.scrollTop = Math.max(0, after.y * scale - offset);
+  scheduleCanvas();
+}
+function decorateCanvas() {
+  spots.clear();
+  const left = viewport.scrollLeft / scale,
+    top = viewport.scrollTop / scale,
+    right = left + viewport.clientWidth / scale,
+    bottom = top + viewport.clientHeight / scale;
+  let seq = 0;
+  const spot = (x: number, y: number, w: number, loc: Location) => {
+    if (doc.view.readingMode) return;
+    if (y < top + 3 || y > bottom - 8 || x + w < left || x > right) return;
+    const key = 'p' + seq++;
+    spots.set(key, loc);
+    const g = element('g', { 'data-spot': key, class: 'insert-spot' });
+    g.append(
+      element('rect', { x, y: y - 8, width: w, height: 16, fill: 'transparent' }),
+      element('line', { x1: x + 8, y1: y, x2: x + w - 8, y2: y }),
+      element('circle', { cx: x + Math.min(w / 2, 100), cy: y, r: 8, fill: '#fff', stroke: '#8eaf9c' }),
+      element(
+        'text',
+        { x: x + Math.min(w / 2, 100), y: y + 4, 'text-anchor': 'middle', 'font-size': 13, fill: '#507b64' },
+        '+',
+      ),
+    );
+    svg.append(g);
+  };
+  const listSpots = (ids: string[], parent: string | null, slot: string, x: number, y: number, w: number) => {
+    spot(x, y, w, { parent, slot, index: 0 });
+    for (let i = 0; i < ids.length; i++) {
+      const b = scene.byId.get(ids[i]);
+      if (b) spot(x, b.y + b.h + 8, w, { parent, slot, index: i + 1 });
+    }
+  };
+  if (!doc.view.focus) listSpots(doc.roots, null, 'roots', 16, 8, Math.max(300, Math.min(scene.width - 32, 700)));
+  for (const b of scene.byId.values()) {
+    if (b.x + b.w < left || b.x > right || b.y + b.h < top || b.y > bottom) continue;
+    const n = doc.nodes[b.id];
+    if (!collapsed.has(b.id)) {
+      if (n.kind === 'If') {
+        for (let i = 0; i < 2; i++) {
+          const lane = b.lanes[i];
+          if (lane)
+            listSpots(n.slots[i ? 'else' : 'then'], n.id, i ? 'else' : 'then', lane.x, b.y + b.head + 43, lane.w);
+        }
+      } else if (n.slots.body) listSpots(n.slots.body, n.id, 'body', b.x + 12, b.y + b.head + 9, b.w - 12);
+    }
+    if (b.y >= top && b.y < bottom) {
+      if (isFoldable(n)) {
+        const fold = element('g', {
+          'data-fold': b.id,
+          role: 'button',
+          tabindex: 0,
+          'aria-label': (collapsed.has(b.id) ? 'Aufklappen: ' : 'Zuklappen: ') + label(doc, n),
+          'aria-expanded': String(!collapsed.has(b.id)),
+          style: 'cursor:pointer',
+        });
+        fold.append(
+          element('rect', {
+            x: b.x + 3,
+            y: b.y + 3,
+            width: 26,
+            height: 26,
+            rx: 4,
+            fill: collapsed.has(b.id) ? '#cdd2d6' : '#dce7de',
+          }),
+          element(
+            'text',
+            { x: b.x + 10, y: b.y + 22, fill: '#305d44', 'font-size': 17 },
+            collapsed.has(b.id) ? '▸' : '▾',
+          ),
+        );
+        svg.append(fold);
+      }
+      if (doc.view.readingMode) continue;
+      const grip = element('g', { 'data-grip': b.id, style: 'cursor:grab' });
+      grip.append(
+        element('rect', { x: b.x + b.w - 29, y: b.y + 2, width: 26, height: 24, fill: '#e6eee7', rx: 3 }),
+        element('text', { x: b.x + b.w - 23, y: b.y + 19, 'font-size': 16, fill: '#507760' }, '⠿'),
+      );
+      svg.append(grip);
+    }
+  }
+  for (const id of validSelection()) {
+    const b = scene.byId.get(id);
+    if (b) svg.append(element('rect', { x: b.x, y: b.y, width: b.w, height: b.h, class: 'selected-whole' }));
+  }
+  quickbar();
+}
+function showInsert(loc: Location, x: number, y: number) {
+  if (doc.view.readingMode) return;
+  target = { ...loc };
+  const pop = $('insert-popover');
+  pop.replaceChildren();
+  const cap = document.createElement('div');
+  cap.className = 'caption';
+  cap.textContent = 'Hier einfügen';
+  pop.append(cap);
+  for (const kind of ['Text', 'If', 'While', 'Repeat', 'Level', 'OnSelector'] as Kind[])
+    pop.append(
+      button(names[kind], () => {
+        closePop();
+        selected = history.insert(kind, loc);
+        selection = [selected];
+        anchor = selected;
+        markDirty();
+        rebuild();
+        reveal(selected);
+        editNode(selected);
+      }),
+    );
+  if (buffer)
+    pop.append(
+      button(buffer.cut ? 'Ausgeschnittene Blöcke einsetzen' : 'Kopierte Blöcke einsetzen', () => pasteAt(loc)),
+    );
+  pop.hidden = false;
+  pop.style.left = Math.max(8, Math.min(x, innerWidth - 245)) + 'px';
+  pop.style.top = Math.max(8, Math.min(y, innerHeight - pop.offsetHeight - 12)) + 'px';
+}
+function editNode(id: string) {
+  if (doc.view.readingMode) return;
+  applyFields();
+  const n = doc.nodes[id];
+  const ids = n.kind === 'Text' ? [id] : n.slots.condition || n.slots.header || [];
+  if (ids.length !== 1) {
+    message('Ausdruck bearbeiten', 'Kein einzelner Ausdruck zum Bearbeiten vorhanden.');
+    return;
+  }
+  editorId = ids[0];
+  editorExpression = !!n.slots.condition || doc.nodes[editorId].kind !== 'Text';
+  const box = $('inline-editor');
+  $<HTMLTextAreaElement>('inline-text').value = editorExpression
+    ? conditionDisplay(doc, [editorId])
+    : doc.nodes[editorId].text;
+  $('inline-label').textContent =
+    names[n.kind] + ' bearbeiten' + (editorExpression ? term(' · UND / ODER / NICHT', ' · AND / OR / NOT') : '');
+  $('condition-preview').hidden = !editorExpression;
+  $<HTMLDetailsElement>('condition-preview').open = false;
+  updateConditionPreview();
+  box.hidden = false;
+  fitInlineEditor(id);
+  $<HTMLTextAreaElement>('inline-text').focus();
+  $<HTMLTextAreaElement>('inline-text').select();
+}
+$<HTMLTextAreaElement>('inline-text').oninput = () => {
+  markDirty();
+  updateConditionPreview();
+  fitInlineEditor();
+};
+$('inline-apply').onclick = () =>
+  safe(() => {
+    if (editorId) {
+      const before = history.revision;
+      const text = $<HTMLTextAreaElement>('inline-text').value;
+      if (editorExpression) editCondition(history, editorId, text);
+      else history.text(editorId, text);
+      fields = [];
+      if (history.revision !== before) markDirty();
+    }
+    editorId = null;
+    $('inline-editor').hidden = true;
+    rebuild();
+  });
+$('inline-cancel').onclick = () => {
+  editorId = null;
+  $('inline-editor').hidden = true;
+};
+function copySelection(cut: boolean) {
+  if (doc.view.readingMode && cut) return;
+  applyFields();
+  const ids = validSelection().slice();
+  if (!ids.length) return;
+  if (ids.length > 1) siblingRange(doc, ids[0], ids.at(-1)!);
+  buffer = { ids, nodes: ids.flatMap((id) => descendants(doc, id).map((x) => structuredClone(doc.nodes[x]))), cut };
+  status(
+    ids.length +
+      ' Block/Blöcke ' +
+      (cut ? 'zum Verschieben markiert' : 'kopiert') +
+      ' · Einfügestelle anklicken und Strg+V drücken',
+  );
+}
+function pasteAt(loc: Location) {
+  if (doc.view.readingMode) return;
+  applyFields();
+  if (!buffer) return;
+  const data = buffer;
+  if (data.cut) data.nodes = data.ids.flatMap((id) => descendants(doc, id).map((x) => structuredClone(doc.nodes[x])));
+  const sourceLocations = locations(doc);
+  const at = { ...loc };
+  if (data.cut) {
+    for (const id of data.ids) history.checkTarget(id, loc, true);
+    at.index -= data.ids.filter((id) => {
+      const s = sourceLocations.get(id);
+      return s && s.parent === loc.parent && s.slot === loc.slot && s.index < loc.index;
+    }).length;
+  }
+  const remap = new Map<string, string>();
+  for (const n of data.nodes) remap.set(n.id, data.cut ? n.id : 'n' + doc.nextId++);
+  const newIds = data.ids.map((id) => remap.get(id)!);
+  history.batch(() => {
+    if (data.cut) for (const id of data.ids) history.remove(id);
+    for (let i = 0; i < data.ids.length; i++) {
+      const source = data.ids[i];
+      const map = new Map(data.nodes.map((n) => [n.id, n]));
+      const work = [source],
+        nodes: Node[] = [];
+      while (work.length) {
+        const n = structuredClone(map.get(work.pop()!)!);
+        work.push(...childIds(n));
+        n.id = remap.get(n.id)!;
+        for (const s of slotNames[n.kind]) n.slots[s] = n.slots[s].map((id) => remap.get(id)!);
+        nodes.push(n);
+      }
+      if ((loc.slot === 'branches') !== (nodes[0].kind === 'OnSelectorBranch'))
+        throw Error('Fallzweige benötigen eine Fallauswahl als Ziel.');
+      history.attach(nodes, newIds[i], { ...at, index: at.index + i });
+    }
+  });
+  if (data.cut) buffer = null;
+  selection = newIds;
+  selected = newIds[0];
+  closePop();
+  markDirty();
+  rebuild();
+  reveal(selected);
+}
+function duplicate() {
+  if (doc.view.readingMode) return;
+  copySelection(false);
+  if (!buffer) return;
+  const loc = parentIndex.get(buffer.ids.at(-1)!)!;
+  pasteAt({ ...loc, index: loc.index + 1 });
+}
+function deleteSelection() {
+  if (doc.view.readingMode) return;
+  applyFields();
+  const ids = validSelection().slice();
+  if (!ids.length) return;
+  if (!confirm(ids.length + ' ausgewählte Blöcke mit allen Inhalten löschen?')) return;
+  history.batch(() => {
+    for (const id of ids) history.remove(id);
+  });
+  selection = [];
+  selected = null;
+  markDirty();
+  rebuild();
+}
+let lastDiagramClick: { id: string; time: number; x: number; y: number } | null = null;
+function handleDiagramClick(e: MouseEvent) {
+  const previous = lastDiagramClick;
+  lastDiagramClick = null;
+  const el = e.target as Element;
+  const procedure = el.closest('[data-procedure]');
+  if (procedure) {
+    goToProcedure(procedure.getAttribute('data-procedure')!);
+    return;
+  }
+  const jump = el.closest('[data-jump]');
+  if (jump) {
+    goToJump(jump.getAttribute('data-jump')!);
+    return;
+  }
+  const include = el.closest('[data-include]');
+  if (include) {
+    offerInclude(include.getAttribute('data-include')!);
+    return;
+  }
+  const fold = el.closest('[data-fold]');
+  if (fold) {
+    toggleFold(fold.getAttribute('data-fold')!);
+    return;
+  }
+  const seam = el.closest('[data-spot]');
+  if (seam) {
+    showInsert(spots.get(seam.getAttribute('data-spot')!)!, e.clientX, e.clientY);
+    return;
+  }
+  const g = el.closest('[data-id]');
+  if (g) {
+    const id = g.getAttribute('data-id')!;
+    closePop();
+    const double =
+      !e.shiftKey &&
+      previous?.id === id &&
+      e.timeStamp - previous.time >= 0 &&
+      e.timeStamp - previous.time <= 550 &&
+      Math.abs(e.clientX - previous.x) <= 6 &&
+      Math.abs(e.clientY - previous.y) <= 6;
+    if (double) {
+      editNode(id);
+      return;
+    }
+    pick(id, e.shiftKey);
+    if (!e.shiftKey) lastDiagramClick = { id, time: e.timeStamp, x: e.clientX, y: e.clientY };
+  } else if (!el.closest('[data-grip]')) clearSelection();
+}
+svg.addEventListener('click', (e) => safe(() => handleDiagramClick(e)));
+let dragging = false;
+svg.addEventListener('pointerdown', (e) =>
+  safe(() => {
+    const grip = (e.target as Element).closest('[data-grip]');
+    if (!grip) return;
+    const id = grip.getAttribute('data-grip')!;
+    if (!selection.includes(id)) pick(id);
+    copySelection(true);
+    dragging = true;
+    e.preventDefault();
+    status('Block auf eine + Einfügestelle ziehen.');
+  }),
+);
+document.addEventListener('pointerup', (e) => {
+  if (!dragging) return;
+  dragging = false;
+  const seam = (e.target as Element).closest('[data-spot]');
+  if (seam) safe(() => pasteAt(spots.get(seam.getAttribute('data-spot')!)!));
+  else status('Verschieben abgebrochen. Keine Änderung.');
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!(e.target as Element).closest('#insert-popover,[data-spot]')) closePop();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
+    if (e.ctrlKey && e.key === 'Enter' && editorId) {
+      e.preventDefault();
+      $('inline-apply').click();
+    }
+    if (e.key === 'Escape') $('inline-cancel').click();
+    return;
+  }
+  if ($<HTMLDialogElement>('message-dialog').open) return;
+  safe(() => {
+    if (e.ctrlKey && ['c', 'x', 'v', 'd'].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+      if (e.key.toLowerCase() === 'c') copySelection(false);
+      if (e.key.toLowerCase() === 'x') copySelection(true);
+      if (e.key.toLowerCase() === 'd') duplicate();
+      if (e.key.toLowerCase() === 'v') {
+        const loc = selected ? parentIndex.get(selected) : null;
+        pasteAt(
+          target || (loc ? { ...loc, index: loc.index + 1 } : { parent: null, slot: 'roots', index: doc.roots.length }),
+        );
+      }
+    }
+    const folding = (e.target as Element).closest?.('[data-fold]');
+    if (folding && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      toggleFold(folding.getAttribute('data-fold')!);
+      return;
+    }
+    if (e.key === 'Delete') {
+      e.preventDefault();
+      deleteSelection();
+    }
+    if (e.key === 'F2' && selected) {
+      e.preventDefault();
+      editNode(selected);
+    }
+    if (e.key === 'Escape') {
+      closePop();
+      $('inline-cancel').click();
+      clearSelection();
+    }
+  });
+});
+const profile = $('profile-controls');
+for (const id of ['output-encoding', 'newline', 'code-language']) {
+  const labelEl = document.createElement('label');
+  labelEl.textContent =
+    id === 'newline' ? 'Zeilenenden' : id === 'code-language' ? 'Sprache des generierten FOP-Codes' : 'Zeichensatz';
+  profile.append(labelEl, $(id));
+}
+$('settings').onclick = () => $<HTMLDialogElement>('output-dialog').showModal();
+$('profile-close').onclick = () => $<HTMLDialogElement>('output-dialog').close();
 
-function goToProcedure(callId:string){applyFields();const call=doc.nodes[callId];if(call?.kind!=='Call')return;const name=expression(doc,call.slots.header).trim();const matches=Object.values(doc.nodes).filter(n=>n.kind==='Procedure'&&expression(doc,n.slots.header).trim()===name);if(matches.length!==1){message('Prozedur öffnen',matches.length?'Der Prozedurname '+name+' ist mehrfach vorhanden.':'Die Prozedur '+name+' wurde in dieser Datei nicht gefunden.');return;}const tab=tabs.find(t=>t.id===activeTab);if(!tab)return;const back=tab.back||(tab.back=[]);back.push({focus:doc.view.focus,selected:callId,collapsed:[...collapsed],scale,x:viewport.scrollLeft,y:viewport.scrollTop,search:$<HTMLInputElement>('search').value});const id=matches[0].id;selected=id;selection=[id];anchor=id;doc.view.focus=id;collapsed.delete(id);doc.view.collapsed=[...collapsed];closePop();rebuild();viewport.scrollTo(0,0);status('Prozedur '+name+' · ← Zurück führt zur Aufrufstelle.');}
-function navigationBack(){applyFields();const tab=tabs.find(t=>t.id===activeTab);const place=tab?.back?.pop();if(!place)return;doc.view.focus=place.focus&&doc.nodes[place.focus]?place.focus:null;selected=place.selected&&doc.nodes[place.selected]?place.selected:null;selection=selected?[selected]:[];anchor=selected;collapsed=new Set(place.collapsed.filter(id=>doc.nodes[id]));doc.view.collapsed=[...collapsed];scale=place.scale;$<HTMLSelectElement>('zoom').value=String(scale);$<HTMLInputElement>('search').value=place.search;closePop();rebuild();viewport.scrollTo(place.x,place.y);scheduleCanvas();status('Zurück an der Aufrufstelle.');}
-$('navigation-back').onclick=()=>safe(navigationBack);
+type LocalHandle = {
+  name: string;
+  getFile: () => Promise<File>;
+  createWritable: () => Promise<{
+    write: (data: string | Uint8Array) => Promise<void>;
+    close: () => Promise<void>;
+    abort?: () => Promise<void>;
+  }>;
+  isSameEntry?: (other: LocalHandle) => Promise<boolean>;
+};
+type NavigationPlace = {
+  focus: string | null;
+  selected: string | null;
+  collapsed: string[];
+  scale: number;
+  x: number;
+  y: number;
+  search: string;
+};
+type TabState = {
+  exportHandle?: LocalHandle;
+  back?: NavigationPlace[];
+  id: number;
+  doc: ReturnType<typeof emptyDocument>;
+  history: History;
+  dirty: boolean;
+  selected: string | null;
+  collapsed: Set<string>;
+  scale: number;
+  scrollX: number;
+  scrollY: number;
+  search: string;
+  handle: LocalHandle | null;
+};
+const tabs: TabState[] = [];
+let activeTab = 0,
+  nextTab = 1,
+  pendingKind: 'etf' | 'spx' | 'source' = 'etf',
+  closeTarget: number | null = null,
+  saving = false;
+const fileAPI = window as unknown as {
+  showOpenFilePicker?: (options: object) => Promise<LocalHandle[]>;
+  showSaveFilePicker?: (options: object) => Promise<LocalHandle>;
+};
+function stashTab() {
+  applyFields();
+  const t = tabs.find((t) => t.id === activeTab);
+  if (t) {
+    t.doc = doc;
+    t.history = history;
+    t.dirty = dirty;
+    t.selected = selected;
+    t.collapsed = new Set(collapsed);
+    t.scale = scale;
+    t.scrollX = viewport.scrollLeft;
+    t.scrollY = viewport.scrollTop;
+    t.search = $<HTMLInputElement>('search').value;
+  }
+}
+function setDocument(next: ReturnType<typeof emptyDocument>, imported = false, handle: LocalHandle | null = null) {
+  stashTab();
+  const blank = tabs.find(
+    (t) => t.id === activeTab && !t.dirty && !t.doc.roots.length && t.doc.metadata.sourceReadOnly !== 'true',
+  );
+  if (blank) tabs.splice(tabs.indexOf(blank), 1);
+  const t: TabState = {
+    id: nextTab++,
+    doc: next,
+    history: new History(next),
+    dirty: imported,
+    selected: null,
+    collapsed: new Set(next.view.collapsed),
+    scale: 1,
+    scrollX: 0,
+    scrollY: 0,
+    search: '',
+    handle,
+  };
+  tabs.push(t);
+  activeTab = t.id;
+  activateDocument(next, imported);
+  t.history = history;
+  scale = 1;
+  rebuild();
+}
+function switchTab(id: number) {
+  if (id === activeTab) return;
+  stashTab();
+  const t = tabs.find((t) => t.id === id);
+  if (!t) return;
+  activeTab = id;
+  activateDocument(t.doc, t.dirty);
+  history = t.history;
+  selected = t.selected;
+  selection = selected ? [selected] : [];
+  collapsed = new Set(t.collapsed);
+  scale = t.scale;
+  $<HTMLSelectElement>('zoom').value = String(scale);
+  $<HTMLInputElement>('search').value = t.search;
+  rebuild();
+  viewport.scrollTo(t.scrollX, t.scrollY);
+}
+function renderTabs() {
+  $<HTMLButtonElement>('navigation-back').disabled = !tabs.find((t) => t.id === activeTab)?.back?.length;
+  const host = $('file-tabs');
+  host.replaceChildren();
+  for (const t of tabs) {
+    const active = t.id === activeTab;
+    const row = document.createElement('div');
+    row.className = 'file-tab' + (active ? ' active' : '');
+    const b = button(
+      t.doc.name +
+        ((active ? dirty : t.dirty) ? ' •' : '') +
+        (t.doc.metadata.sourceReadOnly === 'true' ? ' [FOP]' : ''),
+      () => switchTab(t.id),
+    );
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(active));
+    b.title = t.handle ? 'Speicherdatei: ' + t.handle.name : 'Noch kein direkter Speicherort';
+    row.append(
+      b,
+      button('×', () => requestClose(t.id), 'tab-close'),
+    );
+    host.append(row);
+  }
+  if (activeTab) {
+    const t = tabs.find((t) => t.id === activeTab);
+    $('save').title = t?.handle ? 'Speichert direkt in ' + t.handle.name : 'Projektdatei wählen';
+  }
+}
+function requestClose(id: number) {
+  stashTab();
+  const t = tabs.find((t) => t.id === id);
+  if (!t) return;
+  if (t.dirty) {
+    closeTarget = id;
+    $('close-name').textContent = 'Änderungen an „' + t.doc.name + '“ speichern?';
+    $<HTMLDialogElement>('close-dialog').showModal();
+  } else removeTab(id);
+}
+function removeTab(id: number) {
+  const index = tabs.findIndex((t) => t.id === id);
+  if (index < 0) return;
+  tabs.splice(index, 1);
+  if (activeTab === id) {
+    activeTab = 0;
+    if (tabs.length) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
+    else {
+      doc = emptyDocument();
+      history = new History(doc);
+      dirty = false;
+      fields = [];
+      editorId = null;
+      setDocument(doc);
+    }
+  }
+  renderTabs();
+}
+async function saveActive(asNew = false): Promise<boolean> {
+  if (saving) return false;
+  saving = true;
+  try {
+    applyFields();
+    if (doc.metadata.sourceReadOnly === 'true') {
+      status('FOP-Quelltext ist schreibgeschützt.');
+      return false;
+    }
+    stashTab();
+    const t = tabs.find((t) => t.id === activeTab)!;
+    t.doc.view.collapsed = [...collapsed];
+    const content = projectJSON(t.doc);
+    let handle = asNew ? null : t.handle;
+    if (!handle && fileAPI.showSaveFilePicker) {
+      handle = await fileAPI.showSaveFilePicker({
+        suggestedName: t.doc.name + '.fopproj',
+        types: [{ description: 'FOP-Studio-Projekt', accept: { 'application/json': ['.fopproj'] } }],
+        ...(t.handle ? { startIn: t.handle } : {}),
+      });
+    }
+    if (handle) {
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      t.handle = handle;
+    } else {
+      download(t.doc.name + '.fopproj', content, 'application/json');
+      if (
+        !confirm(
+          'Dieser Browser kann den Speicherort nicht wiederverwenden. Wurde die heruntergeladene Projektdatei erfolgreich gespeichert?',
+        )
+      )
+        return false;
+    }
+    if (doc === t.doc) applyFields();
+    const unchanged = projectJSON(t.doc) === content;
+    t.dirty = !unchanged;
+    if (t.id === activeTab) {
+      dirty = !unchanged;
+      rebuild(false);
+    }
+    renderTabs();
+    status(
+      handle
+        ? 'Gespeichert in ' + handle.name
+        : 'Download bestätigt; zum direkten Speichern Edge oder Chrome mit Dateizugriff verwenden.',
+    );
+    return unchanged;
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError')
+      message('Speichern fehlgeschlagen', String(e) + '\nDie Änderungen bleiben geöffnet.');
+    return false;
+  } finally {
+    saving = false;
+  }
+}
+async function openFile() {
+  try {
+    if (fileAPI.showOpenFilePicker) {
+      const [handle] = await fileAPI.showOpenFilePicker({ multiple: false });
+      if (handle) await readOpenedFile(await handle.getFile(), handle);
+    } else $<HTMLInputElement>('file').click();
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError')
+      message(
+        'Dateizugriff nicht verfügbar',
+        String(e) + '\nÜber „Datei ohne direkten Zugriff öffnen“ kannst du weiterhin Dateien laden.',
+      );
+  }
+}
+async function readOpenedFile(file: File, handle: LocalHandle | null) {
+  if (handle) {
+    for (const t of tabs) {
+      if (t.handle?.isSameEntry && (await t.handle.isSameEntry(handle))) {
+        switchTab(t.id);
+        return;
+      }
+    }
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (file.name.toLowerCase().endsWith('.fopproj')) {
+    setDocument(loadProject(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), false, handle);
+    return;
+  }
+  pendingKind =
+    file.name.toLowerCase().endsWith('.spx') || String.fromCharCode(...bytes.slice(0, 3)) === 'SPX'
+      ? 'spx'
+      : file.name.toLowerCase().endsWith('.etf') || new TextDecoder().decode(bytes.slice(0, 50)).includes('EasyCASE=')
+        ? 'etf'
+        : 'source';
+  pendingFile = { bytes, name: file.name.replace(/\.(etf|spx)$/i, '') };
+  $('import-dialog').querySelector('h2')!.textContent =
+    pendingKind === 'spx'
+      ? 'SPX-Zeichensatz auswählen (Referenzen: Windows-1252)'
+      : pendingKind === 'etf'
+        ? 'ETF-Zeichensatz auswählen'
+        : 'FOP-Quelltext öffnen · Zeichensatz';
+  if (pendingKind === 'spx') $<HTMLSelectElement>('input-encoding').value = 'windows-1252';
+  updateImportPreview();
+  $<HTMLDialogElement>('import-dialog').showModal();
+}
+function updateImportPreview() {
+  if (!pendingFile) return;
+  try {
+    const enc = $<HTMLSelectElement>('input-encoding').value as Encoding;
+    const text =
+      pendingKind === 'spx'
+        ? Object.values(importSPX(pendingFile.bytes, enc).nodes)
+            .filter((n) => n.kind === 'Text')
+            .map((n) => n.text)
+            .join('\n')
+        : decode(pendingFile.bytes, enc);
+    const lines =
+      pendingKind === 'etf'
+        ? text
+            .split(/\r?\n/)
+            .filter((l) => l.startsWith('Line='))
+            .map((l) => l.slice(5))
+        : text.split(/\r?\n/);
+    $('import-preview').textContent = lines.slice(0, 50).join('\n');
+    $<HTMLButtonElement>('import-confirm').disabled = false;
+  } catch (e) {
+    $('import-preview').textContent = String(e);
+    $<HTMLButtonElement>('import-confirm').disabled = true;
+  }
+}
+$('open').onclick = () => {
+  void openFile();
+};
+$('welcome-open').onclick = () => {
+  void openFile();
+};
+$<HTMLInputElement>('file').onchange = async () => {
+  const f = $<HTMLInputElement>('file').files?.[0];
+  $<HTMLInputElement>('file').value = '';
+  if (f)
+    try {
+      await readOpenedFile(f, null);
+    } catch (e) {
+      message('Öffnen fehlgeschlagen', String(e));
+    }
+};
+$('input-encoding').onchange = updateImportPreview;
+$('import-cancel').onclick = () => {
+  pendingFile = null;
+  $<HTMLDialogElement>('import-dialog').close();
+};
+$('import-confirm').onclick = () =>
+  safe(() => {
+    if (!pendingFile) return;
+    const enc = $<HTMLSelectElement>('input-encoding').value as Encoding;
+    let next;
+    if (pendingKind === 'spx') next = importSPX(pendingFile.bytes, enc, pendingFile.name);
+    else if (pendingKind === 'etf') next = importETF(pendingFile.bytes, enc, pendingFile.name);
+    else {
+      next = emptyDocument(pendingFile.name);
+      next.metadata.sourceOnly = decode(pendingFile.bytes, enc);
+      next.metadata.sourceReadOnly = 'true';
+    }
+    next.metadata.inputEncoding = enc;
+    $<HTMLDialogElement>('import-dialog').close();
+    setDocument(next, pendingKind !== 'source', null);
+    pendingFile = null;
+    if (next.diagnostics.length) showDiagnostics();
+  });
+$('new').onclick = () => safe(() => setDocument(emptyDocument()));
+$('save').onclick = () => {
+  void saveActive();
+};
+$('save-as').onclick = () => {
+  void saveActive(true);
+};
+$('close-file').onclick = () => requestClose(activeTab);
+$('close-cancel').onclick = () => $<HTMLDialogElement>('close-dialog').close();
+$('close-discard').onclick = () => {
+  $<HTMLDialogElement>('close-dialog').close();
+  if (closeTarget !== null) removeTab(closeTarget);
+};
+$('close-save').onclick = async () => {
+  if (closeTarget === null) return;
+  const id = closeTarget;
+  $<HTMLDialogElement>('close-dialog').close();
+  switchTab(id);
+  if (await saveActive()) removeTab(id);
+};
 
-function goToJump(ref:string){applyFields();const hits=jumpTargets(ref);if(hits.length!==1){message('Sprungziel',hits.length?'Die Sprungmarke '+ref+' ist nicht eindeutig (erste sieben Zeichen).':'Sprungmarke '+ref+' wurde in dieser Datei nicht gefunden.');return;}const hit=hits[0];if(hit.id===null){const rows=$('source-view').children;for(const row of Array.from(rows))row.classList.remove('jump-target');const row=rows[hit.line] as HTMLElement;row.classList.add('jump-target');row.setAttribute('tabindex','-1');row.scrollIntoView({block:'center'});row.focus({preventScroll:true});}else{const locs=locations(doc);let visible=hit.id;let loc=locs.get(visible);while(loc?.parent&&['header','condition','footer','operands'].includes(loc.slot)){visible=loc.parent;loc=locs.get(visible);}let parent=locs.get(visible)?.parent;while(parent){collapsed.delete(parent);parent=locs.get(parent)?.parent;}collapsed.delete(visible);doc.view.focus=null;rebuild();pick(visible);reveal(visible);}status('Sprungziel: '+ref+' · Zeile '+(hit.line+1));}
+function jumpName(line: string): string | null {
+  const m = line.match(
+    /^\s*\.(?:we(?:i(?:t(?:e(?:r)?)?)?)?|continue)\s+(?:"([^"\r\n]+)"|([^\s?]+))(?:\s*\?[^\r\n]+)?\s*$/i,
+  );
+  const target = m ? m[1] || m[2] : null;
+  return target && !target.includes("'") ? target : null;
+}
+function labelKey(name: string): string {
+  return name.toUpperCase().slice(0, 7);
+}
+function jumpTargets(ref: string): { id: string | null; line: number }[] {
+  const hits: { id: string | null; line: number }[] = [];
+  const scan = (text: string, id: string | null) =>
+    text.split(/\r?\n/).forEach((line, i) => {
+      const m = line.match(/^\s*!([^\s:]+)/);
+      if (m && labelKey(m[1]) === labelKey(ref)) hits.push({ id, line: i });
+    });
+  if (doc.metadata.sourceReadOnly === 'true') scan(doc.metadata.sourceOnly || '', null);
+  else for (const n of Object.values(doc.nodes)) if (n.kind === 'Text') scan(n.text, n.id);
+  return hits;
+}
 
-function includeName(line:string):string|null{const m=line.match(/^\s*\.(?:ein(?:g(?:a(?:b(?:e)?)?)?)?|input)\s+(.+)$/i);return m&&!m[1].trim().startsWith('-')?m[1].trim():null;}
-function offerInclude(ref:string){$('include-info').textContent='Aufruf: '+ref+' — die gewählte Datei wird in einem zusätzlichen Reiter geöffnet.';$<HTMLDialogElement>('include-dialog').showModal();}
-$('include-pick').onclick=()=>{$<HTMLDialogElement>('include-dialog').close();void openFile();};$('include-cancel').onclick=()=>$<HTMLDialogElement>('include-dialog').close();
-function renderSource(){const isSource=doc.metadata.sourceReadOnly==='true';$('source-view').hidden=!isSource;viewport.style.display=isSource?'none':'';$('quickbar').hidden=isSource||!!doc.view.readingMode||!selected;for(const id of ['save','save-as','export','preview','undo','redo'])$<HTMLButtonElement>(id).disabled=isSource||(!!doc.view.readingMode&&['undo','redo'].includes(id))||(id==='undo'&&!history.undoStack.length)||(id==='redo'&&!history.redoStack.length);if(!isSource)return;const host=$('source-view');host.replaceChildren();(doc.metadata.sourceOnly||'').split(/\r?\n/).forEach((line,i)=>{const row=document.createElement('div');row.className='source-line';const num=document.createElement('span');num.className='ln';num.textContent=String(i+1);row.append(num);const ref=includeName(line),jump=jumpName(line);if(ref)row.append(button(line,()=>offerInclude(ref),'include-link'));else if(jump)row.append(button(line,()=>goToJump(jump),'include-link'));else row.append(document.createTextNode(line));host.append(row);});}
+function goToProcedure(callId: string) {
+  applyFields();
+  const call = doc.nodes[callId];
+  if (call?.kind !== 'Call') return;
+  const name = expression(doc, call.slots.header).trim();
+  const matches = Object.values(doc.nodes).filter(
+    (n) => n.kind === 'Procedure' && expression(doc, n.slots.header).trim() === name,
+  );
+  if (matches.length !== 1) {
+    message(
+      'Prozedur öffnen',
+      matches.length
+        ? 'Der Prozedurname ' + name + ' ist mehrfach vorhanden.'
+        : 'Die Prozedur ' + name + ' wurde in dieser Datei nicht gefunden.',
+    );
+    return;
+  }
+  const tab = tabs.find((t) => t.id === activeTab);
+  if (!tab) return;
+  const back = tab.back || (tab.back = []);
+  back.push({
+    focus: doc.view.focus,
+    selected: callId,
+    collapsed: [...collapsed],
+    scale,
+    x: viewport.scrollLeft,
+    y: viewport.scrollTop,
+    search: $<HTMLInputElement>('search').value,
+  });
+  const id = matches[0].id;
+  selected = id;
+  selection = [id];
+  anchor = id;
+  doc.view.focus = id;
+  collapsed.delete(id);
+  doc.view.collapsed = [...collapsed];
+  closePop();
+  rebuild();
+  viewport.scrollTo(0, 0);
+  status('Prozedur ' + name + ' · ← Zurück führt zur Aufrufstelle.');
+}
+function navigationBack() {
+  applyFields();
+  const tab = tabs.find((t) => t.id === activeTab);
+  const place = tab?.back?.pop();
+  if (!place) return;
+  doc.view.focus = place.focus && doc.nodes[place.focus] ? place.focus : null;
+  selected = place.selected && doc.nodes[place.selected] ? place.selected : null;
+  selection = selected ? [selected] : [];
+  anchor = selected;
+  collapsed = new Set(place.collapsed.filter((id) => doc.nodes[id]));
+  doc.view.collapsed = [...collapsed];
+  scale = place.scale;
+  $<HTMLSelectElement>('zoom').value = String(scale);
+  $<HTMLInputElement>('search').value = place.search;
+  closePop();
+  rebuild();
+  viewport.scrollTo(place.x, place.y);
+  scheduleCanvas();
+  status('Zurück an der Aufrufstelle.');
+}
+$('navigation-back').onclick = () => safe(navigationBack);
+
+function goToJump(ref: string) {
+  applyFields();
+  const hits = jumpTargets(ref);
+  if (hits.length !== 1) {
+    message(
+      'Sprungziel',
+      hits.length
+        ? 'Die Sprungmarke ' + ref + ' ist nicht eindeutig (erste sieben Zeichen).'
+        : 'Sprungmarke ' + ref + ' wurde in dieser Datei nicht gefunden.',
+    );
+    return;
+  }
+  const hit = hits[0];
+  if (hit.id === null) {
+    const rows = $('source-view').children;
+    for (const row of Array.from(rows)) row.classList.remove('jump-target');
+    const row = rows[hit.line] as HTMLElement;
+    row.classList.add('jump-target');
+    row.setAttribute('tabindex', '-1');
+    row.scrollIntoView({ block: 'center' });
+    row.focus({ preventScroll: true });
+  } else {
+    const locs = locations(doc);
+    let visible = hit.id;
+    let loc = locs.get(visible);
+    while (loc?.parent && ['header', 'condition', 'footer', 'operands'].includes(loc.slot)) {
+      visible = loc.parent;
+      loc = locs.get(visible);
+    }
+    let parent = locs.get(visible)?.parent;
+    while (parent) {
+      collapsed.delete(parent);
+      parent = locs.get(parent)?.parent;
+    }
+    collapsed.delete(visible);
+    doc.view.focus = null;
+    rebuild();
+    pick(visible);
+    reveal(visible);
+  }
+  status('Sprungziel: ' + ref + ' · Zeile ' + (hit.line + 1));
+}
+
+function includeName(line: string): string | null {
+  const m = line.match(/^\s*\.(?:ein(?:g(?:a(?:b(?:e)?)?)?)?|input)\s+(.+)$/i);
+  return m && !m[1].trim().startsWith('-') ? m[1].trim() : null;
+}
+function offerInclude(ref: string) {
+  $('include-info').textContent =
+    'Aufruf: ' + ref + ' — die gewählte Datei wird in einem zusätzlichen Reiter geöffnet.';
+  $<HTMLDialogElement>('include-dialog').showModal();
+}
+$('include-pick').onclick = () => {
+  $<HTMLDialogElement>('include-dialog').close();
+  void openFile();
+};
+$('include-cancel').onclick = () => $<HTMLDialogElement>('include-dialog').close();
+function renderSource() {
+  const isSource = doc.metadata.sourceReadOnly === 'true';
+  $('source-view').hidden = !isSource;
+  viewport.style.display = isSource ? 'none' : '';
+  $('quickbar').hidden = isSource || !!doc.view.readingMode || !selected;
+  for (const id of ['save', 'save-as', 'export', 'preview', 'undo', 'redo'])
+    $<HTMLButtonElement>(id).disabled =
+      isSource ||
+      (!!doc.view.readingMode && ['undo', 'redo'].includes(id)) ||
+      (id === 'undo' && !history.undoStack.length) ||
+      (id === 'redo' && !history.redoStack.length);
+  if (!isSource) return;
+  const host = $('source-view');
+  host.replaceChildren();
+  (doc.metadata.sourceOnly || '').split(/\r?\n/).forEach((line, i) => {
+    const row = document.createElement('div');
+    row.className = 'source-line';
+    const num = document.createElement('span');
+    num.className = 'ln';
+    num.textContent = String(i + 1);
+    row.append(num);
+    const ref = includeName(line),
+      jump = jumpName(line);
+    if (ref) row.append(button(line, () => offerInclude(ref), 'include-link'));
+    else if (jump) row.append(button(line, () => goToJump(jump), 'include-link'));
+    else row.append(document.createTextNode(line));
+    host.append(row);
+  });
+}
 // A direct link opens a picker; no guessed abas search order and no program execution.
-const originalDetails=renderProperties;renderProperties=function(){originalDetails();const old=$('include-shortcuts');if(old)old.remove();if(!selected)return;const n=doc.nodes[selected];if(!n)return;const texts=n.kind==='Text'?[n.text]:['header','footer'].flatMap(slot=>(n.slots[slot]||[]).flatMap(id=>descendants(doc,id).filter(id=>doc.nodes[id].kind==='Text').map(id=>doc.nodes[id].text)));const panel=document.createElement('div');panel.id='include-shortcuts';panel.className='includes';for(const line of texts.join('\n').split('\n')){const ref=includeName(line),jump=jumpName(line);if(ref)panel.append(button(ref+' ↗',()=>offerInclude(ref)));if(jump)panel.append(button('Zur Marke '+jump+' →',()=>goToJump(jump)));}if(panel.children.length){$('outline').parentElement!.append(panel);}};
-const fallback=button('Datei ohne direkten Zugriff öffnen',()=>$<HTMLInputElement>('file').click(),'small');$('toolbar').append(fallback);
+const renderProperties = () => {
+  renderPropertiesBase();
+  const old = $('include-shortcuts');
+  if (old) old.remove();
+  if (!selected) return;
+  const n = doc.nodes[selected];
+  if (!n) return;
+  const texts =
+    n.kind === 'Text'
+      ? [n.text]
+      : ['header', 'footer'].flatMap((slot) =>
+          (n.slots[slot] || []).flatMap((id) =>
+            descendants(doc, id)
+              .filter((id) => doc.nodes[id].kind === 'Text')
+              .map((id) => doc.nodes[id].text),
+          ),
+        );
+  const panel = document.createElement('div');
+  panel.id = 'include-shortcuts';
+  panel.className = 'includes';
+  for (const line of texts.join('\n').split('\n')) {
+    const ref = includeName(line),
+      jump = jumpName(line);
+    if (ref) panel.append(button(ref + ' ↗', () => offerInclude(ref)));
+    if (jump) panel.append(button('Zur Marke ' + jump + ' →', () => goToJump(jump)));
+  }
+  if (panel.children.length) {
+    $('outline').parentElement!.append(panel);
+  }
+};
+const fallback = button('Datei ohne direkten Zugriff öffnen', () => $<HTMLInputElement>('file').click(), 'small');
+$('toolbar').append(fallback);
 setDocument(doc);
 
 // Resize only the navigation column; diagram repaint is handled by ResizeObserver.
-const overviewResizer=$('overview-resizer');
-let overviewDrag:{pointer:number;startX:number;startWidth:number}|null=null;
-function setOverviewWidth(width:number){const max=Math.max(180,Math.min(720,$('workspace').clientWidth-320));const value=Math.round(Math.max(180,Math.min(max,width)));$('workspace').style.setProperty('--overview-width',value+'px');overviewResizer.setAttribute('aria-valuemax',String(max));overviewResizer.setAttribute('aria-valuenow',String(value));}
-overviewResizer.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();overviewDrag={pointer:e.pointerId,startX:e.clientX,startWidth:$('program-overview').getBoundingClientRect().width};overviewResizer.setPointerCapture(e.pointerId);overviewResizer.classList.add('dragging');document.body.classList.add('resizing-overview');};
-overviewResizer.onpointermove=e=>{if(overviewDrag?.pointer===e.pointerId)setOverviewWidth(overviewDrag.startWidth+e.clientX-overviewDrag.startX);};
-function stopOverviewResize(){overviewDrag=null;overviewResizer.classList.remove('dragging');document.body.classList.remove('resizing-overview');}
-overviewResizer.onpointerup=e=>{if(overviewDrag?.pointer!==e.pointerId)return;stopOverviewResize();if(overviewResizer.hasPointerCapture(e.pointerId))overviewResizer.releasePointerCapture(e.pointerId);};
-overviewResizer.onpointercancel=stopOverviewResize;overviewResizer.onlostpointercapture=stopOverviewResize;
-overviewResizer.ondblclick=()=>setOverviewWidth(246);
-overviewResizer.onkeydown=e=>{const width=$('program-overview').getBoundingClientRect().width;const step=e.shiftKey?50:20;if(e.key==='ArrowLeft')setOverviewWidth(width-step);else if(e.key==='ArrowRight')setOverviewWidth(width+step);else if(e.key==='Home')setOverviewWidth(180);else if(e.key==='End')setOverviewWidth(720);else return;e.preventDefault();};
-window.addEventListener('resize',()=>setOverviewWidth($('program-overview').getBoundingClientRect().width));
+const overviewResizer = $('overview-resizer');
+let overviewDrag: { pointer: number; startX: number; startWidth: number } | null = null;
+function setOverviewWidth(width: number) {
+  const max = Math.max(180, Math.min(720, $('workspace').clientWidth - 320));
+  const value = Math.round(Math.max(180, Math.min(max, width)));
+  $('workspace').style.setProperty('--overview-width', value + 'px');
+  overviewResizer.setAttribute('aria-valuemax', String(max));
+  overviewResizer.setAttribute('aria-valuenow', String(value));
+}
+overviewResizer.onpointerdown = (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  overviewDrag = {
+    pointer: e.pointerId,
+    startX: e.clientX,
+    startWidth: $('program-overview').getBoundingClientRect().width,
+  };
+  overviewResizer.setPointerCapture(e.pointerId);
+  overviewResizer.classList.add('dragging');
+  document.body.classList.add('resizing-overview');
+};
+overviewResizer.onpointermove = (e) => {
+  if (overviewDrag?.pointer === e.pointerId)
+    setOverviewWidth(overviewDrag.startWidth + e.clientX - overviewDrag.startX);
+};
+function stopOverviewResize() {
+  overviewDrag = null;
+  overviewResizer.classList.remove('dragging');
+  document.body.classList.remove('resizing-overview');
+}
+overviewResizer.onpointerup = (e) => {
+  if (overviewDrag?.pointer !== e.pointerId) return;
+  stopOverviewResize();
+  if (overviewResizer.hasPointerCapture(e.pointerId)) overviewResizer.releasePointerCapture(e.pointerId);
+};
+overviewResizer.onpointercancel = stopOverviewResize;
+overviewResizer.onlostpointercapture = stopOverviewResize;
+overviewResizer.ondblclick = () => setOverviewWidth(246);
+overviewResizer.onkeydown = (e) => {
+  const width = $('program-overview').getBoundingClientRect().width;
+  const step = e.shiftKey ? 50 : 20;
+  if (e.key === 'ArrowLeft') setOverviewWidth(width - step);
+  else if (e.key === 'ArrowRight') setOverviewWidth(width + step);
+  else if (e.key === 'Home') setOverviewWidth(180);
+  else if (e.key === 'End') setOverviewWidth(720);
+  else return;
+  e.preventDefault();
+};
+window.addEventListener('resize', () => setOverviewWidth($('program-overview').getBoundingClientRect().width));
 
-$('structure-language').onchange=()=>safe(()=>{applyFields();doc.view.language=$<HTMLSelectElement>('structure-language').value==='en'?'en':'de';markDirty();rebuild();});
+$('structure-language').onchange = () =>
+  safe(() => {
+    applyFields();
+    doc.view.language = $<HTMLSelectElement>('structure-language').value === 'en' ? 'en' : 'de';
+    markDirty();
+    rebuild();
+  });
 
-$('reading-mode').onclick=()=>safe(()=>{applyFields();closePop();doc.view.readingMode=!doc.view.readingMode;markDirty();rebuild();if(selected)reveal(selected);});
+$('reading-mode').onclick = () =>
+  safe(() => {
+    applyFields();
+    closePop();
+    doc.view.readingMode = !doc.view.readingMode;
+    markDirty();
+    rebuild();
+    if (selected) reveal(selected);
+  });
 
-function updateConditionPreview(){if(!editorExpression)return;try{const d=parseCondition($<HTMLTextAreaElement>('inline-text').value);$('condition-fop').textContent=fopExpression(d,d.roots);}catch(e){$('condition-fop').textContent=String(e);}}
+function updateConditionPreview() {
+  if (!editorExpression) return;
+  try {
+    const d = parseCondition($<HTMLTextAreaElement>('inline-text').value);
+    $('condition-fop').textContent = fopExpression(d, d.roots);
+  } catch (e) {
+    $('condition-fop').textContent = String(e);
+  }
+}
 
-let exportingFOP=false;
-async function writeExport(handle:LocalHandle,bytes:Uint8Array):Promise<void>{for(let attempt=0;attempt<2;attempt++){let stream:Awaited<ReturnType<LocalHandle['createWritable']>>|undefined;try{stream=await handle.createWritable();await stream.write(bytes);await stream.close();return;}catch(e){try{await stream?.abort?.();}catch{}if((e as Error).name!=='InvalidStateError'||attempt===1)throw e;status('Netzwerkdatei hat ihren Zustand geändert. Export wird einmal erneut versucht.');if(handle.getFile)await handle.getFile();}}}
-async function exportToFile():Promise<boolean>{if(exportingFOP)return false;exportingFOP=true;try{applyFields();const exportingDoc=doc,tab=tabs.find(t=>t.id===activeTab);if(exportingDoc.metadata.sourceReadOnly==='true')throw Error('FOP-Quelltext ist schreibgeschützt.');const result=exportFOP(exportingDoc);if(!fileAPI.showSaveFilePicker){if(confirm('Dieser Browser bietet keinen „Speichern unter“-Dialog für Dateien an. Stattdessen als Download ausgeben? Der Speicherort richtet sich dann nach den Browser-Einstellungen.')){download(exportingDoc.name,result.bytes,'application/octet-stream');status('FOP-Download gestartet. Speicherort über den Browser wählen.');}return false;}const storedId=exportingDoc.metadata.fopExportPickerId;const pickerId=storedId&&/^[a-zA-Z0-9_-]{1,32}$/.test(storedId)?storedId:'fop-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);let handle:LocalHandle;try{handle=await fileAPI.showSaveFilePicker({id:pickerId,suggestedName:exportingDoc.metadata.fopExportName||exportingDoc.name,...(tab?.exportHandle?{startIn:tab.exportHandle}:{})});}catch(e){if(tab&&(e as Error).name!=='AbortError')tab.exportHandle=undefined;throw e;}if(/\.fopproj$/i.test(handle.name))throw Error('Bitte eine FOP-Datei wählen, keine Projektdatei (.fopproj).');await writeExport(handle,result.bytes);if(tab)tab.exportHandle=handle;const changed=exportingDoc.metadata.fopExportPickerId!==pickerId||exportingDoc.metadata.fopExportName!==handle.name;exportingDoc.metadata.fopExportPickerId=pickerId;exportingDoc.metadata.fopExportName=handle.name;if(changed){if(tab)tab.dirty=true;if(doc===exportingDoc)markDirty();else renderTabs();}status('FOP gespeichert: '+handle.name+(changed?' · Projekt speichern, um das Exportziel zu merken.':''));return true;}catch(e){if((e as Error).name==='AbortError')status('FOP-Export abgebrochen.');else message('FOP-Export fehlgeschlagen',(e as Error).name==='InvalidStateError'?'Die Netzwerkdatei meldet auch nach einem erneuten Schreibversuch einen geänderten Zustand. Bitte den Export nochmals starten und das Ziel erneut auswählen. Das Projekt bleibt geöffnet.':String(e));return false;}finally{exportingFOP=false;}}
+let exportingFOP = false;
+async function writeExport(handle: LocalHandle, bytes: Uint8Array): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let stream: Awaited<ReturnType<LocalHandle['createWritable']>> | undefined;
+    try {
+      stream = await handle.createWritable();
+      await stream.write(bytes);
+      await stream.close();
+      return;
+    } catch (e) {
+      try {
+        await stream?.abort?.();
+      } catch {
+        /* Fehler beim Aufräumen des Streams werden bewusst ignoriert. */
+      }
+      if ((e as Error).name !== 'InvalidStateError' || attempt === 1) throw e;
+      status('Netzwerkdatei hat ihren Zustand geändert. Export wird einmal erneut versucht.');
+      if (handle.getFile) await handle.getFile();
+    }
+  }
+}
+async function exportToFile(): Promise<boolean> {
+  if (exportingFOP) return false;
+  exportingFOP = true;
+  try {
+    applyFields();
+    const exportingDoc = doc,
+      tab = tabs.find((t) => t.id === activeTab);
+    if (exportingDoc.metadata.sourceReadOnly === 'true') throw Error('FOP-Quelltext ist schreibgeschützt.');
+    const result = exportFOP(exportingDoc);
+    if (!fileAPI.showSaveFilePicker) {
+      if (
+        confirm(
+          'Dieser Browser bietet keinen „Speichern unter“-Dialog für Dateien an. Stattdessen als Download ausgeben? Der Speicherort richtet sich dann nach den Browser-Einstellungen.',
+        )
+      ) {
+        download(exportingDoc.name, result.bytes, 'application/octet-stream');
+        status('FOP-Download gestartet. Speicherort über den Browser wählen.');
+      }
+      return false;
+    }
+    const storedId = exportingDoc.metadata.fopExportPickerId;
+    const pickerId =
+      storedId && /^[a-zA-Z0-9_-]{1,32}$/.test(storedId)
+        ? storedId
+        : 'fop-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    let handle: LocalHandle;
+    try {
+      handle = await fileAPI.showSaveFilePicker({
+        id: pickerId,
+        suggestedName: exportingDoc.metadata.fopExportName || exportingDoc.name,
+        ...(tab?.exportHandle ? { startIn: tab.exportHandle } : {}),
+      });
+    } catch (e) {
+      if (tab && (e as Error).name !== 'AbortError') tab.exportHandle = undefined;
+      throw e;
+    }
+    if (/\.fopproj$/i.test(handle.name)) throw Error('Bitte eine FOP-Datei wählen, keine Projektdatei (.fopproj).');
+    await writeExport(handle, result.bytes);
+    if (tab) tab.exportHandle = handle;
+    const changed =
+      exportingDoc.metadata.fopExportPickerId !== pickerId || exportingDoc.metadata.fopExportName !== handle.name;
+    exportingDoc.metadata.fopExportPickerId = pickerId;
+    exportingDoc.metadata.fopExportName = handle.name;
+    if (changed) {
+      if (tab) tab.dirty = true;
+      if (doc === exportingDoc) markDirty();
+      else renderTabs();
+    }
+    status('FOP gespeichert: ' + handle.name + (changed ? ' · Projekt speichern, um das Exportziel zu merken.' : ''));
+    return true;
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') status('FOP-Export abgebrochen.');
+    else
+      message(
+        'FOP-Export fehlgeschlagen',
+        (e as Error).name === 'InvalidStateError'
+          ? 'Die Netzwerkdatei meldet auch nach einem erneuten Schreibversuch einen geänderten Zustand. Bitte den Export nochmals starten und das Ziel erneut auswählen. Das Projekt bleibt geöffnet.'
+          : String(e),
+      );
+    return false;
+  } finally {
+    exportingFOP = false;
+  }
+}
 
-function fitInlineEditor(anchorId?:string){const box=$('inline-editor');if(box.hidden)return;const area=$<HTMLTextAreaElement>('inline-text');let longest=0;for(const line of area.value.split('\n'))longest=Math.max(longest,Array.from(line.replace(/\t/g,'    ')).length);const width=Math.min(Math.max(240,innerWidth-32),Math.max(440,Math.ceil(longest*8.5)+60));box.style.width=width+'px';const scroll=area.scrollTop;area.style.height='0px';const overhead=Math.max(90,box.offsetHeight-area.offsetHeight);const available=Math.max(40,innerHeight-32-overhead);const needed=area.scrollHeight||Math.max(60,area.value.split('\n').length*22+20);area.style.height=Math.min(available,Math.max(60,needed))+'px';area.style.overflowY=needed>available?'auto':'hidden';area.scrollTop=scroll;let left=parseFloat(box.style.left)||16,top=parseFloat(box.style.top)||60;if(anchorId){const b=scene.byId.get(anchorId),rect=viewport.getBoundingClientRect();left=rect.left+(b?b.x*scale-viewport.scrollLeft:20);top=rect.top+(b?b.y*scale-viewport.scrollTop:30);}box.style.left=Math.max(16,Math.min(left,innerWidth-width-16))+'px';box.style.top=Math.max(16,Math.min(top,innerHeight-box.offsetHeight-16))+'px';}
-$('condition-preview').addEventListener('toggle',()=>fitInlineEditor());
-window.addEventListener('resize',()=>fitInlineEditor());
+function fitInlineEditor(anchorId?: string) {
+  const box = $('inline-editor');
+  if (box.hidden) return;
+  const area = $<HTMLTextAreaElement>('inline-text');
+  let longest = 0;
+  for (const line of area.value.split('\n'))
+    longest = Math.max(longest, Array.from(line.replace(/\t/g, '    ')).length);
+  const width = Math.min(Math.max(240, innerWidth - 32), Math.max(440, Math.ceil(longest * 8.5) + 60));
+  box.style.width = width + 'px';
+  const scroll = area.scrollTop;
+  area.style.height = '0px';
+  const overhead = Math.max(90, box.offsetHeight - area.offsetHeight);
+  const available = Math.max(40, innerHeight - 32 - overhead);
+  const needed = area.scrollHeight || Math.max(60, area.value.split('\n').length * 22 + 20);
+  area.style.height = Math.min(available, Math.max(60, needed)) + 'px';
+  area.style.overflowY = needed > available ? 'auto' : 'hidden';
+  area.scrollTop = scroll;
+  let left = parseFloat(box.style.left) || 16,
+    top = parseFloat(box.style.top) || 60;
+  if (anchorId) {
+    const b = scene.byId.get(anchorId),
+      rect = viewport.getBoundingClientRect();
+    left = rect.left + (b ? b.x * scale - viewport.scrollLeft : 20);
+    top = rect.top + (b ? b.y * scale - viewport.scrollTop : 30);
+  }
+  box.style.left = Math.max(16, Math.min(left, innerWidth - width - 16)) + 'px';
+  box.style.top = Math.max(16, Math.min(top, innerHeight - box.offsetHeight - 16)) + 'px';
+}
+$('condition-preview').addEventListener('toggle', () => fitInlineEditor());
+window.addEventListener('resize', () => fitInlineEditor());
 
-$('help').onclick=()=>message('Arbeiten mit FOP Studio','1. ETF, SPX oder Projekt öffnen und den Zeichensatz anhand der Vorschau bestätigen.\n2. Links einen Bereich wählen oder im Programm suchen.\n3. Elemente auswählen und per Doppelklick oder Bearbeiten ändern. Pfeile klappen Strukturen ein und aus.\n4. Über + neue Elemente einfügen; vorhandene Blöcke kopieren oder verschieben.\n5. Als Projekt speichern, um später weiterzuarbeiten.\n6. Ausgabeprofil wählen, FOP-Vorschau prüfen und exportieren.\n\nGeöffnete Dateien werden nicht hochgeladen. Der Unterstützungslink öffnet eine externe Website und benötigt Internet.\n\nGenerierte Programme vor produktiver Nutzung in abas testen.\n\nDIREKT IM DIAGRAMM ARBEITEN\n+ zwischen Blöcken oder in einem leeren Zweig: Element einfügen.\nDoppelklick / F2: Text oder Bedingung direkt bearbeiten.\nKlick: ganzen Block auswählen. Shift+Klick: zusammenhängende Blöcke auswählen.\nStrg+C / Strg+X: kopieren / ausschneiden.\n+ Einfügestelle wählen, Strg+V: einsetzen.\nStrg+D: Auswahl vollständig duplizieren.\nLeiste unten: Auswahl mit IF oder Schleife umschliessen.\nGriff rechts am Block: auf eine + Stelle ziehen.\nStrg+Z / Strg+Y: Rückgängig / Wiederholen.\n\nIMPORT UND EXPORT\nWarum kann der Export eines importierten Programms gestoppt werden?\n\nManche Programme enthalten bereits Befehle, die Prozeduraufrufe und den Rücksprung zur Aufrufstelle verwalten. FOP Studio erzeugt diese Verwaltung selbst. Wenn zusätzlich Befehle der bisherigen Verwaltung vorhanden sind oder übernommener Code auf die von FOP Studio verwendeten Verwaltungsvariablen zugreift, können Konflikte entstehen. Deshalb stoppt FOP Studio den Export.\n\nDie Meldung nennt das betroffene Element, den gefundenen Befehl und, soweit verfügbar, die Quellzeile. Suche diese Stelle im Programm und prüfe, wofür sie verwendet wird. Entferne oder ändere sie nur, wenn geklärt ist, dass sie zur bisherigen Aufrufverwaltung gehört und nicht mehr benötigt wird. Nicht ungeprüft löschen: Andere Programmteile könnten davon abhängen.\n\nWenn die Verwendung unklar ist, lass die Stelle von einer mit dem Programm vertrauten Person prüfen. Danach erneut exportieren und das Ergebnis in einer abas-Testumgebung testen. FOP Studio entfernt solche Befehle nicht automatisch.');
+$('help').onclick = () =>
+  message(
+    'Arbeiten mit FOP Studio',
+    '1. ETF, SPX oder Projekt öffnen und den Zeichensatz anhand der Vorschau bestätigen.\n2. Links einen Bereich wählen oder im Programm suchen.\n3. Elemente auswählen und per Doppelklick oder Bearbeiten ändern. Pfeile klappen Strukturen ein und aus.\n4. Über + neue Elemente einfügen; vorhandene Blöcke kopieren oder verschieben.\n5. Als Projekt speichern, um später weiterzuarbeiten.\n6. Ausgabeprofil wählen, FOP-Vorschau prüfen und exportieren.\n\nGeöffnete Dateien werden nicht hochgeladen. Der Unterstützungslink öffnet eine externe Website und benötigt Internet.\n\nGenerierte Programme vor produktiver Nutzung in abas testen.\n\nDIREKT IM DIAGRAMM ARBEITEN\n+ zwischen Blöcken oder in einem leeren Zweig: Element einfügen.\nDoppelklick / F2: Text oder Bedingung direkt bearbeiten.\nKlick: ganzen Block auswählen. Shift+Klick: zusammenhängende Blöcke auswählen.\nStrg+C / Strg+X: kopieren / ausschneiden.\n+ Einfügestelle wählen, Strg+V: einsetzen.\nStrg+D: Auswahl vollständig duplizieren.\nLeiste unten: Auswahl mit IF oder Schleife umschliessen.\nGriff rechts am Block: auf eine + Stelle ziehen.\nStrg+Z / Strg+Y: Rückgängig / Wiederholen.\n\nIMPORT UND EXPORT\nWarum kann der Export eines importierten Programms gestoppt werden?\n\nManche Programme enthalten bereits Befehle, die Prozeduraufrufe und den Rücksprung zur Aufrufstelle verwalten. FOP Studio erzeugt diese Verwaltung selbst. Wenn zusätzlich Befehle der bisherigen Verwaltung vorhanden sind oder übernommener Code auf die von FOP Studio verwendeten Verwaltungsvariablen zugreift, können Konflikte entstehen. Deshalb stoppt FOP Studio den Export.\n\nDie Meldung nennt das betroffene Element, den gefundenen Befehl und, soweit verfügbar, die Quellzeile. Suche diese Stelle im Programm und prüfe, wofür sie verwendet wird. Entferne oder ändere sie nur, wenn geklärt ist, dass sie zur bisherigen Aufrufverwaltung gehört und nicht mehr benötigt wird. Nicht ungeprüft löschen: Andere Programmteile könnten davon abhängen.\n\nWenn die Verwendung unklar ist, lass die Stelle von einer mit dem Programm vertrauten Person prüfen. Danach erneut exportieren und das Ergebnis in einer abas-Testumgebung testen. FOP Studio entfernt solche Befehle nicht automatisch.',
+  );

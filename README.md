@@ -19,11 +19,15 @@ Vorschauversion: Generiertes FOP vor produktiver Nutzung in abas prüfen. Automa
 
 Node.js 24 verwenden. Der Build benötigt keine Laufzeitbibliotheken.
 
-~~~sh
+```sh
+npm ci
 node build.mjs
 npm test
+npm run check
+npm run lint
+npm run format:check
 node build-site.mjs
-~~~
+```
 
 Ausgaben: dist/FOP-Studio.html und site/ für GitHub Pages. publication.json enthält Unterstützungslink, Repository-URL und Copyright-Namen. Keine Widgets, externen Schriftarten oder Telemetrie.
 
