@@ -13,7 +13,7 @@ FOP-Studio.html herunterladen und in einem aktuellen Edge oder Chrome öffnen. D
 - Projekte als .fopproj speichern; FOP mit wählbarem Ausgabezeichensatz exportieren.
 - Mehrere Dateien, Suche, Prozedurnavigation, DE/EN-Strukturbegriffe und Lesemodus.
 
-Vorschauversion: Generiertes FOP vor produktiver Nutzung in abas prüfen. Automatisierte Tests ersetzen keine abas-Ausführungstests. Alte Prozedurverwaltung im übernommenen Code kann den Export blockieren.
+Vorschauversion: Generiertes FOP vor produktiver Nutzung in abas prüfen. Automatisierte Tests ersetzen keine abas-Ausführungstests.
 
 ## Entwickeln
 
